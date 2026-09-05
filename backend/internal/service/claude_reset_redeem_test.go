@@ -52,6 +52,12 @@ func (s *redeemLeaseStub) ReleaseLeaderLock(_ context.Context, key, _ string) er
 	return nil
 }
 
+func (s *redeemLeaseStub) ExtendLeaderLock(_ context.Context, key, _ string, _ time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.keys[key], nil
+}
+
 type redeemFake struct {
 	mu        sync.Mutex
 	status    string // usage body
