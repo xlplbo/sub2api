@@ -21,7 +21,7 @@ func TestNormalizeOpenAIAutoResetCreditExtra(t *testing.T) {
 		require.Equal(t, 1.0, config.Threshold7d)
 		require.False(t, config.ExpiryEnabled)
 		require.False(t, config.Active())
-		require.Equal(t, 24*time.Hour, config.ExpiryLead)
+		require.Equal(t, 10*time.Minute, config.ExpiryLead)
 	})
 
 	t.Run("到期用卡独立开关", func(t *testing.T) {
@@ -29,12 +29,12 @@ func TestNormalizeOpenAIAutoResetCreditExtra(t *testing.T) {
 			OpenAIAutoResetCreditExpiryEnabledExtraKey: true,
 		})
 		require.NoError(t, err)
-		require.Equal(t, 1440.0, extra[OpenAIAutoResetCreditExpiryLeadMinutesExtraKey], "开启时补齐默认 24 小时")
+		require.Equal(t, 10.0, extra[OpenAIAutoResetCreditExpiryLeadMinutesExtraKey], "开启时补齐默认 10 分钟")
 		config := ResolveOpenAIAutoResetCreditConfig(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: extra})
 		require.False(t, config.Enabled)
 		require.True(t, config.ExpiryEnabled)
 		require.True(t, config.Active())
-		require.Equal(t, 24*time.Hour, config.ExpiryLead)
+		require.Equal(t, 10*time.Minute, config.ExpiryLead)
 
 		_, err = normalizeOpenAIAutoResetCreditExtra(PlatformOpenAI, AccountTypeOAuth, false, map[string]any{
 			OpenAIAutoResetCreditExpiryEnabledExtraKey:     true,

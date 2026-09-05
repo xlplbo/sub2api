@@ -3493,7 +3493,7 @@ const autoResetCreditEnabled = ref(false)
 const autoResetCredit5hThreshold = ref(100)
 const autoResetCredit7dThreshold = ref(100)
 const autoResetCreditExpiryEnabled = ref(false)
-const autoResetCreditExpiryLeadMinutes = ref(1440)
+const autoResetCreditExpiryLeadMinutes = ref(10)
 const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
@@ -4043,7 +4043,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	autoResetCreditExpiryLeadMinutes.value =
 		typeof extra?.auto_reset_credit_expiry_lead_minutes === 'number' && extra.auto_reset_credit_expiry_lead_minutes > 0
 			? extra.auto_reset_credit_expiry_lead_minutes
-			: 1440
+			: 10
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
   upstreamBillingRateSyncEnabled.value =
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true

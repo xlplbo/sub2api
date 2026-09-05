@@ -24,7 +24,7 @@ const (
 	openAIAutoResetCreditMinimumThreshold     = 0.001
 	openAIAutoResetCreditMaxExpiryLeadMinutes = 366 * 24 * 60
 	openAIAutoResetCreditMinExpiryLeadMinutes = 10
-	openAIAutoResetCreditDefaultLeadMinutes   = 24 * 60
+	openAIAutoResetCreditDefaultLeadMinutes   = openAIAutoResetCreditMinExpiryLeadMinutes
 )
 
 // OpenAIAutoResetCreditConfig 是账号级自动用卡配置。阈值采用 0-1 比例，

@@ -1653,7 +1653,7 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     expect((parent.get('[data-testid="auto-reset-credit-5h-threshold"]').element as HTMLInputElement).value).toBe('100')
     expect((parent.get('[data-testid="auto-reset-credit-7d-threshold"]').element as HTMLInputElement).value).toBe('100')
     expect(parent.find('[data-testid="auto-reset-credit-expiry-settings"]').exists()).toBe(true)
-    expect((parent.get('[data-testid="auto-reset-credit-expiry-lead-minutes"]').element as HTMLInputElement).value).toBe('1440')
+    expect((parent.get('[data-testid="auto-reset-credit-expiry-lead-minutes"]').element as HTMLInputElement).value).toBe('10')
     expect(parent.get('[data-testid="auto-reset-credit-5h-threshold"]').attributes('disabled')).toBeDefined()
     expect(parent.get('[data-testid="auto-reset-credit-expiry-lead-minutes"]').attributes('disabled')).toBeDefined()
     parent.unmount()
@@ -1728,7 +1728,7 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
       auto_reset_credit_enabled: false,
       auto_reset_credit_expiry_enabled: true,
-      auto_reset_credit_expiry_lead_minutes: 1440
+      auto_reset_credit_expiry_lead_minutes: 10
     })
     wrapper.unmount()
   })
