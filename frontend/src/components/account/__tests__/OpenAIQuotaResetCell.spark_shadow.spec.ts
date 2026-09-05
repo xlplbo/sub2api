@@ -108,6 +108,29 @@ describe('OpenAIQuotaResetCell — 外审 F6:影子禁用重置', () => {
     wrapper.unmount()
   })
 
+  it('显示缓存明细的刷新时间', () => {
+    const account = makeAccount({
+      parent_account_id: null,
+      extra: {
+        codex_reset_credit_snapshot: {
+          available_count: 1,
+          credits: [{ expires_at: FUTURE_EXPIRY_EARLY }],
+        },
+        codex_reset_credit_snapshot_at: '2026-09-05T01:02:03Z',
+      },
+    })
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account } })
+
+    const snapshotAt = wrapper.get('[data-testid="reset-credit-snapshot-at"]')
+    expect(snapshotAt.text()).toContain('admin.accounts.openaiQuotaReset.snapshotAt:')
+    expect(snapshotAt.attributes('title')).toContain('admin.accounts.openaiQuotaReset.snapshotAtFull:')
+    wrapper.unmount()
+
+    const withoutSnapshot = mount(OpenAIQuotaResetCell, { props: { account: makeAccount({ parent_account_id: null }) } })
+    expect(withoutSnapshot.find('[data-testid="reset-credit-snapshot-at"]').exists()).toBe(false)
+    withoutSnapshot.unmount()
+  })
+
   it('缓存中的重置卡全部过期时视为未知,不点亮重置入口', () => {
     const account = makeAccount({
       parent_account_id: null,

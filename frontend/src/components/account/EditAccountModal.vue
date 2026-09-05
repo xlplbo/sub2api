@@ -2509,6 +2509,19 @@
           </div>
         </div>
         <p class="input-hint">{{ t('admin.accounts.autoResetCredit.thresholdHint') }}</p>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.autoResetCredit.expiryLeadMinutes') }}</label>
+          <input
+            v-model.number="autoResetCreditExpiryLeadMinutes"
+            type="number"
+            min="0"
+            step="1"
+            class="input"
+            :disabled="!autoResetCreditEnabled"
+            data-testid="auto-reset-credit-expiry-lead-minutes"
+          />
+          <p class="input-hint">{{ t('admin.accounts.autoResetCredit.expiryLeadHint') }}</p>
+        </div>
       </div>
 
       <!-- 配额控制 (Anthropic OAuth/SetupToken: 亲和 + 窗口费用 + 会话 + RPM 等) -->
@@ -3448,6 +3461,7 @@ const autoPause7dDisabled = ref(false)
 const autoResetCreditEnabled = ref(false)
 const autoResetCredit5hThreshold = ref(100)
 const autoResetCredit7dThreshold = ref(100)
+const autoResetCreditExpiryLeadMinutes = ref(0)
 const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
@@ -3993,6 +4007,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 		typeof extra?.auto_reset_credit_5h_threshold === 'number' ? extra.auto_reset_credit_5h_threshold * 100 : 100
 	autoResetCredit7dThreshold.value =
 		typeof extra?.auto_reset_credit_7d_threshold === 'number' ? extra.auto_reset_credit_7d_threshold * 100 : 100
+	autoResetCreditExpiryLeadMinutes.value =
+		typeof extra?.auto_reset_credit_expiry_lead_minutes === 'number' ? extra.auto_reset_credit_expiry_lead_minutes : 0
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
   upstreamBillingRateSyncEnabled.value =
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
@@ -4967,6 +4983,11 @@ const handleSubmit = async () => {
 			appStore.showError(t('admin.accounts.autoResetCredit.thresholdInvalid'))
 			return
 		}
+		const lead = Number(autoResetCreditExpiryLeadMinutes.value || 0)
+		if (!Number.isInteger(lead) || lead > 527040 || (lead !== 0 && lead < 10)) {
+			appStore.showError(t('admin.accounts.autoResetCredit.expiryLeadInvalid'))
+			return
+		}
 	}
 
   const updatePayload: Record<string, unknown> = { ...form }
@@ -5558,6 +5579,7 @@ const handleSubmit = async () => {
 			newExtra.auto_reset_credit_enabled = autoResetCreditEnabled.value
 			newExtra.auto_reset_credit_5h_threshold = autoResetCredit5hThreshold.value / 100
 			newExtra.auto_reset_credit_7d_threshold = autoResetCredit7dThreshold.value / 100
+			newExtra.auto_reset_credit_expiry_lead_minutes = Number(autoResetCreditExpiryLeadMinutes.value || 0)
 		}
 		// 运行态只允许后端服务更新，账号编辑不得回写旧状态。
 		delete newExtra.codex_auto_reset_credit_state

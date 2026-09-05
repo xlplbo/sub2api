@@ -517,6 +517,8 @@ export default {
         expandExpirations: '展开其余 {count} 张重置次数到期时间',
         collapseExpirations: '收起重置次数到期时间',
         expirationDetails: '重置次数到期明细',
+        snapshotAt: '明细 {time}',
+        snapshotAtFull: '重置次数明细刷新时间: {time}',
         noCreditsAvailable: '没有可用的重置次数',
         resetSuccess: '已重置 {windows} 个窗口，次数和账号状态已更新',
         resetCacheRefreshFailed: '窗口已重置、账号状态已恢复，但重置次数未能回读，请重新查询次数。',
@@ -972,11 +974,14 @@ export default {
 	  autoPauseDisabledHint: '开启后该账号永不进入自动暂停（即使全局默认阈值已配置）。',
 	  autoResetCredit: {
 	    title: '自动使用重置卡',
-	    hint: '仅在实际用量达到阈值时使用最早到期的可用卡；默认关闭。无卡或失败时账号保持暂停。',
+	    hint: '实际用量达到阈值，或配置了到期提前量且卡即将到期时，使用最早到期的可用卡；默认关闭。无卡或失败时账号保持暂停。',
 	    threshold5h: '5h 自动用卡阈值(%)',
 	    threshold7d: '7d 自动用卡阈值(%)',
 	    thresholdHint: '两个窗口独立判断，任一达到自身阈值即触发。可填写 0.1–100，默认均为 100。',
-	    thresholdInvalid: '自动使用重置卡阈值必须在 0.1% 到 100% 之间。'
+	    thresholdInvalid: '自动使用重置卡阈值必须在 0.1% 到 100% 之间。',
+	    expiryLeadMinutes: '到期前 N 分钟无条件用卡',
+	    expiryLeadHint: '填 0 关闭，非 0 时最少 10 分钟。启动时和之后每天各取一次卡明细，按最早到期的卡设定时器；到点时实查上游核对，卡仍在且剩余有效期不超过 N 分钟才不看用量直接使用。时间判定一律以上游返回的时间为准，不依赖本机时钟。',
+	    expiryLeadInvalid: '到期提前量必须为 0，或 10 到 527040 之间的整数分钟。'
 	  },
       // Quota control (Anthropic OAuth/SetupToken only)
       quotaControl: {

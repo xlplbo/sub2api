@@ -89,13 +89,22 @@
       </span>
     </div>
 
-    <div v-if="primaryResetCreditExpiry" class="space-y-1">
+    <div v-if="primaryResetCreditExpiry || resetCreditSnapshotAt" class="space-y-1">
       <div class="flex flex-wrap items-center gap-1">
         <span
+          v-if="primaryResetCreditExpiry"
           class="inline-flex max-w-full items-center rounded bg-gray-100 px-1.5 py-0.5 text-[10px] leading-4 text-gray-600 tabular-nums dark:bg-dark-800 dark:text-gray-300"
           :title="t('admin.accounts.openaiQuotaReset.expiresAtFull', { time: formatResetCreditExpiry(primaryResetCreditExpiry, 'full') })"
         >
           {{ t('admin.accounts.openaiQuotaReset.expiresAt', { time: formatResetCreditExpiry(primaryResetCreditExpiry, 'short') }) }}
+        </span>
+        <span
+          v-if="resetCreditSnapshotAt"
+          data-testid="reset-credit-snapshot-at"
+          class="inline-flex max-w-full items-center rounded px-1.5 py-0.5 text-[10px] leading-4 text-gray-500 tabular-nums dark:text-gray-400"
+          :title="t('admin.accounts.openaiQuotaReset.snapshotAtFull', { time: formatResetCreditExpiry(resetCreditSnapshotAt, 'full') })"
+        >
+          {{ t('admin.accounts.openaiQuotaReset.snapshotAt', { time: formatResetCreditExpiry(resetCreditSnapshotAt, 'short') }) }}
         </span>
         <button
           v-if="hiddenResetCreditCount > 0"
@@ -294,6 +303,10 @@ const resetCreditExpirations = computed(() =>
     .sort(compareResetCreditExpiry)
 )
 const primaryResetCreditExpiry = computed(() => resetCreditExpirations.value[0] ?? '')
+const resetCreditSnapshotAt = computed(() => {
+  const value = props.account.extra?.codex_reset_credit_snapshot_at
+  return typeof value === 'string' && !Number.isNaN(new Date(value).getTime()) ? value : ''
+})
 const hiddenResetCreditCount = computed(() => Math.max(resetCreditExpirations.value.length - 1, 0))
 const canReset = computed(() => availableResetCount.value > 0 && !isShadow.value)
 
