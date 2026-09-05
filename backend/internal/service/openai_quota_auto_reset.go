@@ -122,6 +122,7 @@ type OpenAIQuotaAutoResetService struct {
 type openAIAutoResetFetchState struct {
 	nextAt  time.Time
 	fetched bool
+	config  OpenAIAutoResetCreditConfig
 }
 
 func NewOpenAIQuotaAutoResetService(
@@ -291,7 +292,7 @@ func (s *OpenAIQuotaAutoResetService) forEachEnabledAccount(ctx context.Context,
 		}
 		for i := range accounts {
 			account := &accounts[i]
-			if account.Schedulable && ResolveOpenAIAutoResetCreditConfig(account).Enabled {
+			if account.Schedulable && ResolveOpenAIAutoResetCreditConfig(account).Active() {
 				fn(account.ID)
 			}
 		}
@@ -405,21 +406,27 @@ func (s *OpenAIQuotaAutoResetService) evaluateAccount(ctx context.Context, accou
 		return nil
 	}
 	config := ResolveOpenAIAutoResetCreditConfig(account)
-	if !config.Enabled {
-		s.disarmExpiryTimer(accountID)
-		return nil
+	if !config.ExpiryEnabled {
+		if s.disarmExpiryTimer(accountID) || account.Extra[OpenAIAutoResetCreditExpiryAtExtraKey] != nil {
+			s.persistExpiryAt(ctx, accountID, nil)
+		}
 	}
 	if !account.IsActive() || !account.Schedulable {
 		return nil
 	}
 
 	now := time.Now()
-	assessment := s.assessExtra(account, config, now)
-	state := openAIAutoResetStateFromExtra(account.Extra)
 	leader := s.isSchedulerLeader()
 	fetch, scheduled := s.fetchStates.Load(accountID)
 	fetchState, _ := fetch.(openAIAutoResetFetchState)
-	refreshDue := leader && (!scheduled || !now.Before(fetchState.nextAt))
+	// 开关或提前量变化时立即重取一次，刷新缓存并按新配置重排定时器。
+	configChanged := fetchState.fetched && fetchState.config != config
+	refreshDue := leader && (!scheduled || !now.Before(fetchState.nextAt) || configChanged)
+	if !config.Active() {
+		return nil
+	}
+	assessment := s.assessExtra(account, config, now)
+	state := openAIAutoResetStateFromExtra(account.Extra)
 	_, expiryDue := s.expiryDue.LoadAndDelete(accountID)
 	// 计划内取卡只由领导实例做；错峰未轮到的账号也不因用量快照过期而提前实查，
 	// 避免重启时集中打上游。用量阈值触发不受此限。
@@ -457,18 +464,18 @@ func (s *OpenAIQuotaAutoResetService) evaluateAccount(ctx context.Context, accou
 	usage, err := s.quota.QueryUsage(ctx, accountID)
 	if err != nil || usage == nil {
 		if leader {
-			s.fetchStates.Store(accountID, openAIAutoResetFetchState{nextAt: now.Add(openAIAutoResetSnapshotTTL), fetched: fetchState.fetched})
+			s.fetchStates.Store(accountID, openAIAutoResetFetchState{nextAt: now.Add(openAIAutoResetSnapshotTTL), fetched: fetchState.fetched, config: fetchState.config})
 		}
 		return s.failState(ctx, accountID, checking, "RESET_CREDIT_QUERY_FAILED", err)
 	}
 	if leader {
 		nextAt := now.Add(openAIAutoResetCreditRefreshInterval)
-		if config.ExpiryLead > 0 && usage.upstreamTime.IsZero() {
+		if config.ExpiryEnabled && usage.upstreamTime.IsZero() {
 			// 没有上游时间就排不了定时器，按失败重试节奏继续取，直到拿到 Date 头。
 			nextAt = now.Add(openAIAutoResetSnapshotTTL)
 		}
-		s.fetchStates.Store(accountID, openAIAutoResetFetchState{nextAt: nextAt, fetched: true})
-		s.armExpiryTimer(accountID, config, usage)
+		s.fetchStates.Store(accountID, openAIAutoResetFetchState{nextAt: nextAt, fetched: true, config: config})
+		s.armExpiryTimer(ctx, accountID, config, usage)
 	}
 	if err := s.persistFreshUsage(ctx, accountID, usage, now); err != nil {
 		code := "USAGE_SNAPSHOT_WRITE_FAILED"
@@ -487,11 +494,11 @@ func (s *OpenAIQuotaAutoResetService) evaluateAccount(ctx context.Context, accou
 		return err
 	}
 	config = ResolveOpenAIAutoResetCreditConfig(account)
-	if !config.Enabled {
+	if !config.Active() {
 		return nil
 	}
 	assessment = s.assessUsage(usage, account, config, now)
-	if config.ExpiryLead > 0 && !usage.upstreamTime.IsZero() && now.Sub(usage.upstreamTime).Abs() > openAIAutoResetMaxClockSkew {
+	if config.ExpiryEnabled && !usage.upstreamTime.IsZero() && now.Sub(usage.upstreamTime).Abs() > openAIAutoResetMaxClockSkew {
 		slog.Warn("openai_auto_reset_clock_skew", "account_id", accountID, "skew", now.Sub(usage.upstreamTime).String())
 	}
 	available := usage.RateLimitResetCredits.AvailableCount
@@ -544,7 +551,7 @@ func (s *OpenAIQuotaAutoResetService) evaluateAccount(ctx context.Context, accou
 	}
 
 	account, err = s.accountRepo.GetByID(ctx, accountID)
-	if err != nil || account == nil || !ResolveOpenAIAutoResetCreditConfig(account).Enabled {
+	if err != nil || account == nil || !ResolveOpenAIAutoResetCreditConfig(account).Active() {
 		return err
 	}
 	result, err := s.idempotency.Execute(ctx, IdempotencyExecuteOptions{
@@ -624,7 +631,7 @@ func (s *OpenAIQuotaAutoResetService) evaluateAccount(ctx context.Context, accou
 		success.AvailableCount = post.Quota.RateLimitResetCredits.AvailableCount
 	}
 	if leader && post.Quota != nil {
-		s.armExpiryTimer(accountID, config, post.Quota)
+		s.armExpiryTimer(ctx, accountID, config, post.Quota)
 	}
 	if err := s.persistState(ctx, accountID, success); err != nil {
 		return err
@@ -669,7 +676,7 @@ func (s *OpenAIQuotaAutoResetService) assessUsage(usage *OpenAIQuotaUsage, accou
 	utilization7d := readOpenAIQuotaUsedPercent(updates, "7d") / 100
 	// 到期判定只信上游 Date 头，本机时钟被改过时不得据此花卡。
 	expiring := false
-	if config.ExpiryLead > 0 {
+	if config.ExpiryEnabled && config.ExpiryLead > 0 {
 		if usage.upstreamTime.IsZero() {
 			slog.Warn("openai_auto_reset_upstream_time_missing", "account_id", account.ID)
 		} else {
@@ -686,8 +693,8 @@ func (s *OpenAIQuotaAutoResetService) buildAssessment(account *Account, config O
 		threshold5h:   config.Threshold5h,
 		threshold7d:   config.Threshold7d,
 	}
-	reset5h := utilization5h >= config.Threshold5h
-	reset7d := utilization7d >= config.Threshold7d
+	reset5h := config.Enabled && utilization5h >= config.Threshold5h
+	reset7d := config.Enabled && utilization7d >= config.Threshold7d
 	assessment.thresholdReached = reset5h || reset7d
 	assessment.resetReached = assessment.thresholdReached || expiryReached
 	assessment.triggerWindow = joinOpenAIAutoResetWindows(reset5h, reset7d)
@@ -883,26 +890,37 @@ func openAIAutoResetCreditExpiring(expirations []string, lead time.Duration, now
 }
 
 // 定时器到点只打标记并入队，是否用卡由实查上游后的最终校验决定。
-func (s *OpenAIQuotaAutoResetService) armExpiryTimer(accountID int64, config OpenAIAutoResetCreditConfig, usage *OpenAIQuotaUsage) {
+// 计划触发时刻同时写入账号 extra 供列表显示；没有定时器时清空。
+func (s *OpenAIQuotaAutoResetService) armExpiryTimer(ctx context.Context, accountID int64, config OpenAIAutoResetCreditConfig, usage *OpenAIQuotaUsage) {
 	s.disarmExpiryTimer(accountID)
-	if config.ExpiryLead <= 0 || usage == nil || usage.upstreamTime.IsZero() {
-		return
+	var expiryAt any
+	if config.ExpiryEnabled && config.ExpiryLead > 0 && usage != nil && !usage.upstreamTime.IsZero() {
+		delay, ok := openAIAutoResetEarliestExpiryDelay(openAIAutoResetCreditExpirations(usage.RateLimitResetCredits), config.ExpiryLead, usage.upstreamTime)
+		if ok && delay > 0 {
+			s.expiryTimers.Store(accountID, time.AfterFunc(delay, func() {
+				s.expiryDue.Store(accountID, struct{}{})
+				s.Notify(accountID)
+			}))
+			expiryAt = usage.upstreamTime.Add(delay).UTC().Format(time.RFC3339)
+		}
 	}
-	delay, ok := openAIAutoResetEarliestExpiryDelay(openAIAutoResetCreditExpirations(usage.RateLimitResetCredits), config.ExpiryLead, usage.upstreamTime)
-	if !ok || delay <= 0 {
-		return
-	}
-	s.expiryTimers.Store(accountID, time.AfterFunc(delay, func() {
-		s.expiryDue.Store(accountID, struct{}{})
-		s.Notify(accountID)
-	}))
+	s.persistExpiryAt(ctx, accountID, expiryAt)
 }
 
-func (s *OpenAIQuotaAutoResetService) disarmExpiryTimer(accountID int64) {
-	if value, ok := s.expiryTimers.LoadAndDelete(accountID); ok {
-		if timer, ok := value.(*time.Timer); ok {
-			timer.Stop()
-		}
+func (s *OpenAIQuotaAutoResetService) disarmExpiryTimer(accountID int64) bool {
+	value, ok := s.expiryTimers.LoadAndDelete(accountID)
+	if !ok {
+		return false
+	}
+	if timer, ok := value.(*time.Timer); ok {
+		timer.Stop()
+	}
+	return true
+}
+
+func (s *OpenAIQuotaAutoResetService) persistExpiryAt(ctx context.Context, accountID int64, expiryAt any) {
+	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{OpenAIAutoResetCreditExpiryAtExtraKey: expiryAt}); err != nil {
+		slog.Warn("openai_auto_reset_expiry_at_persist_failed", "account_id", accountID, "error", err)
 	}
 }
 
