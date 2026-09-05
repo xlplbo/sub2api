@@ -896,6 +896,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	if ResolveOpenAIAutoResetCreditConfig(updated).Active() {
+		notifyOpenAIAutoReset(updated.ID)
+	}
 	return updated, nil
 }
 

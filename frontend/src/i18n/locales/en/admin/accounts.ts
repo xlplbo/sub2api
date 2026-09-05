@@ -902,14 +902,16 @@ export default {
 	  autoPauseDisabledHint: 'When enabled, this account is never auto-paused (even if a global default threshold is configured).',
 	  autoResetCredit: {
 	    title: 'Automatically use reset credits',
-	    hint: 'Uses the earliest-expiring available credit when actual usage reaches a threshold, or when an expiry lead is set and a credit is about to expire. Off by default; the account remains paused if no credit is available or reset fails.',
+	    hint: 'Uses the earliest-expiring available credit only when actual usage reaches a threshold. Off by default; the account remains paused if no credit is available or reset fails.',
 	    threshold5h: '5h auto-reset threshold (%)',
 	    threshold7d: '7d auto-reset threshold (%)',
 	    thresholdHint: 'Each window is evaluated independently. Enter 0.1–100; both default to 100.',
 	    thresholdInvalid: 'Automatic reset-credit thresholds must be between 0.1% and 100%.',
+	    expiryTitle: 'Use reset credits before they expire',
+	    expiryHint: 'Independent of the threshold switch above. Credit details are fetched immediately when this is enabled or changed and once a day afterwards, and a timer is armed for the earliest-expiring credit; when it fires the upstream is re-checked and the credit is used regardless of usage only if it is still there with no more than N minutes left. All timing uses the upstream clock, never the local one.',
 	    expiryLeadMinutes: 'Use unconditionally N minutes before expiry',
-	    expiryLeadHint: '0 disables it; any other value must be at least 10 minutes. Credit details are fetched at startup and once a day, and a timer is armed for the earliest-expiring credit; when it fires the upstream is re-checked and the credit is used regardless of usage only if it is still there with no more than N minutes left. All timing uses the upstream clock, never the local one.',
-	    expiryLeadInvalid: 'The expiry lead must be 0 or a whole number of minutes between 10 and 527040.'
+	    expiryLeadHint: 'Defaults to 1440 minutes (24 hours); minimum 10 minutes.',
+	    expiryLeadInvalid: 'The expiry lead must be a whole number of minutes between 10 and 527040.'
 	  },
       // Quota control (Anthropic OAuth/SetupToken only)
       quotaControl: {
@@ -1602,8 +1604,8 @@ export default {
         expandExpirations: 'Expand the other {count} reset credit expiration(s)',
         collapseExpirations: 'Collapse reset credit expirations',
         expirationDetails: 'Reset credit expiration details',
-        snapshotAt: 'Details {time}',
-        snapshotAtFull: 'Reset credit details refreshed at {time}',
+        expiryResetAt: 'Auto-reset at {time}',
+        expiryResetAtFull: 'Scheduled expiry auto-reset: {time}',
         noCreditsAvailable: 'No reset credits available',
         resetSuccess: 'Reset {windows} window(s); credits and account state updated',
         resetCacheRefreshFailed: 'The window was reset and account state recovered, but the reset-credit count could not be read back. Query it again.',
