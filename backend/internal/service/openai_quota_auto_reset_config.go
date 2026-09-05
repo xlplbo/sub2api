@@ -6,18 +6,22 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 const (
-	OpenAIAutoResetCreditEnabledExtraKey     = "auto_reset_credit_enabled"
-	OpenAIAutoResetCredit5hThresholdExtraKey = "auto_reset_credit_5h_threshold"
-	OpenAIAutoResetCredit7dThresholdExtraKey = "auto_reset_credit_7d_threshold"
-	OpenAIAutoResetCreditStateExtraKey       = "codex_auto_reset_credit_state"
+	OpenAIAutoResetCreditEnabledExtraKey           = "auto_reset_credit_enabled"
+	OpenAIAutoResetCredit5hThresholdExtraKey       = "auto_reset_credit_5h_threshold"
+	OpenAIAutoResetCredit7dThresholdExtraKey       = "auto_reset_credit_7d_threshold"
+	OpenAIAutoResetCreditExpiryLeadMinutesExtraKey = "auto_reset_credit_expiry_lead_minutes"
+	OpenAIAutoResetCreditStateExtraKey             = "codex_auto_reset_credit_state"
 
-	openAIAutoResetCreditDefaultThreshold = 1.0
-	openAIAutoResetCreditMinimumThreshold = 0.001
+	openAIAutoResetCreditDefaultThreshold     = 1.0
+	openAIAutoResetCreditMinimumThreshold     = 0.001
+	openAIAutoResetCreditMaxExpiryLeadMinutes = 366 * 24 * 60
+	openAIAutoResetCreditMinExpiryLeadMinutes = 10
 )
 
 // OpenAIAutoResetCreditConfig 是账号级自动用卡配置。阈值采用 0-1 比例，
@@ -26,6 +30,7 @@ type OpenAIAutoResetCreditConfig struct {
 	Enabled     bool
 	Threshold5h float64
 	Threshold7d float64
+	ExpiryLead  time.Duration
 }
 
 // ResolveOpenAIAutoResetCreditConfig 只接受 OpenAI OAuth 母账号；历史账号未配置时
@@ -44,6 +49,9 @@ func ResolveOpenAIAutoResetCreditConfig(account *Account) OpenAIAutoResetCreditC
 	}
 	if value, ok := resolveAccountExtraNumber(account.Extra, OpenAIAutoResetCredit7dThresholdExtraKey); ok && isValidOpenAIAutoResetThreshold(value) {
 		config.Threshold7d = value
+	}
+	if value, ok := resolveAccountExtraNumber(account.Extra, OpenAIAutoResetCreditExpiryLeadMinutesExtraKey); ok && isValidOpenAIAutoResetExpiryLeadMinutes(value) {
+		config.ExpiryLead = time.Duration(value) * time.Minute
 	}
 	return config
 }
@@ -64,7 +72,8 @@ func normalizeOpenAIAutoResetCreditExtra(platform, accountType string, isShadow 
 	_, hasEnabled := normalized[OpenAIAutoResetCreditEnabledExtraKey]
 	_, has5h := normalized[OpenAIAutoResetCredit5hThresholdExtraKey]
 	_, has7d := normalized[OpenAIAutoResetCredit7dThresholdExtraKey]
-	if !hasEnabled && !has5h && !has7d {
+	_, hasLead := normalized[OpenAIAutoResetCreditExpiryLeadMinutesExtraKey]
+	if !hasEnabled && !has5h && !has7d && !hasLead {
 		return normalized, nil
 	}
 	if platform != PlatformOpenAI || accountType != AccountTypeOAuth || isShadow {
@@ -95,6 +104,13 @@ func normalizeOpenAIAutoResetCreditExtra(platform, accountType string, isShadow 
 		}
 		normalized[key] = value
 	}
+	if hasLead {
+		value, ok := parseOpenAIAutoResetThreshold(normalized[OpenAIAutoResetCreditExpiryLeadMinutesExtraKey])
+		if !ok || !isValidOpenAIAutoResetExpiryLeadMinutes(value) {
+			return nil, infraerrors.Newf(http.StatusBadRequest, "OPENAI_AUTO_RESET_CREDIT_EXPIRY_LEAD_INVALID", "%s must be 0 or a whole number of minutes between %d and %d", OpenAIAutoResetCreditExpiryLeadMinutesExtraKey, openAIAutoResetCreditMinExpiryLeadMinutes, openAIAutoResetCreditMaxExpiryLeadMinutes)
+		}
+		normalized[OpenAIAutoResetCreditExpiryLeadMinutesExtraKey] = value
+	}
 	return normalized, nil
 }
 
@@ -107,6 +123,7 @@ func stripOpenAIAutoResetCreditManagedExtra(extra map[string]any, stripConfig bo
 		delete(extra, OpenAIAutoResetCreditEnabledExtraKey)
 		delete(extra, OpenAIAutoResetCredit5hThresholdExtraKey)
 		delete(extra, OpenAIAutoResetCredit7dThresholdExtraKey)
+		delete(extra, OpenAIAutoResetCreditExpiryLeadMinutesExtraKey)
 	}
 	return extra
 }
@@ -134,6 +151,14 @@ func parseOpenAIAutoResetThreshold(value any) (float64, bool) {
 
 func isValidOpenAIAutoResetThreshold(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= openAIAutoResetCreditMinimumThreshold && value <= 1
+}
+
+// 非零提前量不得短于取信息失败后的 10 分钟重试间隔，否则到点那次拿不到上游时间就可能错过卡。
+func isValidOpenAIAutoResetExpiryLeadMinutes(value float64) bool {
+	if math.IsNaN(value) || value != math.Trunc(value) || value > openAIAutoResetCreditMaxExpiryLeadMinutes {
+		return false
+	}
+	return value == 0 || value >= openAIAutoResetCreditMinExpiryLeadMinutes
 }
 
 func cloneOpenAIAutoResetExtra(source map[string]any) map[string]any {
