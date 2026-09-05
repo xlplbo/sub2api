@@ -910,7 +910,7 @@ export default {
 	    expiryTitle: 'Use reset credits before they expire',
 	    expiryHint: 'Independent of the threshold switch above. Credit details are fetched immediately when this is enabled or changed and once a day afterwards, and a timer is armed for the earliest-expiring credit; when it fires the upstream is re-checked and the credit is used regardless of usage only if it is still there with no more than N minutes left. All timing uses the upstream clock, never the local one.',
 	    expiryLeadMinutes: 'Use unconditionally N minutes before expiry',
-	    expiryLeadHint: 'Defaults to 1440 minutes (24 hours); minimum 10 minutes.',
+	    expiryLeadHint: 'Defaults to 10 minutes, which is also the minimum allowed.',
 	    expiryLeadInvalid: 'The expiry lead must be a whole number of minutes between 10 and 527040.'
 	  },
       // Quota control (Anthropic OAuth/SetupToken only)

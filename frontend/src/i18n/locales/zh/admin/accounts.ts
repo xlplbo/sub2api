@@ -982,7 +982,7 @@ export default {
 	    expiryTitle: '到期前自动用卡',
 	    expiryHint: '与上面的阈值用卡相互独立。开启或修改配置时立即取一次卡明细，之后每天一次，并按最早到期的卡设定时器；到点时实查上游核对，卡仍在且剩余有效期不超过 N 分钟才不看用量直接使用。时间判定一律以上游返回的时间为准，不依赖本机时钟。',
 	    expiryLeadMinutes: '到期前 N 分钟无条件用卡',
-	    expiryLeadHint: '默认 1440 分钟（24 小时），最少 10 分钟。',
+	    expiryLeadHint: '默认 10 分钟，也是允许的最小值。',
 	    expiryLeadInvalid: '到期提前量必须是 10 到 527040 之间的整数分钟。'
 	  },
       // Quota control (Anthropic OAuth/SetupToken only)
