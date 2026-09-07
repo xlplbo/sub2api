@@ -114,6 +114,7 @@ type OpenAIQuotaAutoResetService struct {
 
 	fetchStates     sync.Map
 	expiryDue       sync.Map
+	stateDue        sync.Map
 	expiryTimers    sync.Map
 	schedulerLeader atomic.Bool
 }
@@ -428,10 +429,11 @@ func (s *OpenAIQuotaAutoResetService) evaluateAccount(ctx context.Context, accou
 	assessment := s.assessExtra(account, config, now)
 	state := openAIAutoResetStateFromExtra(account.Extra)
 	_, expiryDue := s.expiryDue.LoadAndDelete(accountID)
+	_, stateDue := s.stateDue.LoadAndDelete(accountID)
 	// 计划内取卡只由领导实例做；错峰未轮到的账号也不因用量快照过期而提前实查，
 	// 避免重启时集中打上游。用量阈值触发不受此限。
 	needsQuery := (openAIAutoResetSnapshotStale(account.Extra, now) && (fetchState.fetched || refreshDue)) ||
-		assessment.thresholdReached || expiryDue || refreshDue
+		assessment.thresholdReached || expiryDue || stateDue || refreshDue
 	if assessment.pauseReached && !assessment.resetReached {
 		needsQuery = needsQuery || state == nil || state.Status == OpenAIAutoResetStatusChecking || state.Status == OpenAIAutoResetStatusFailed || openAIAutoResetStateStale(state, now)
 	}
@@ -1092,10 +1094,19 @@ func (s *OpenAIQuotaAutoResetService) syncCreditUsage(ctx context.Context, accou
 		s.fetchStates.Store(accountID, openAIAutoResetFetchState{nextAt: time.Now().Add(openAIAutoResetCreditRefreshInterval), fetched: true, config: config})
 		s.armExpiryTimer(ctx, accountID, config, usage)
 	}
+	notify := false
 	// 已进入提前窗口的卡排不了定时器，按到点语义打标记入队，是否用卡仍由实查后的最终校验决定。
 	if config.ExpiryEnabled && config.ExpiryLead > 0 &&
 		openAIAutoResetCreditExpiring(openAIAutoResetCreditExpirations(usage.RateLimitResetCredits), config.ExpiryLead, usage.upstreamTime) {
 		s.expiryDue.Store(accountID, struct{}{})
+		notify = true
+	}
+	// 网关暂停决策读运行态里的卡数；与刚查到的不一致时让调度器立即实查校正，而不是等 24 小时。
+	if state := openAIAutoResetStateFromExtra(account.Extra); state != nil && state.AvailableCount != usage.RateLimitResetCredits.AvailableCount {
+		s.stateDue.Store(accountID, struct{}{})
+		notify = true
+	}
+	if notify {
 		s.Notify(accountID)
 	}
 }
