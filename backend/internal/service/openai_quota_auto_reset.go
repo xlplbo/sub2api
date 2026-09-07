@@ -1092,8 +1092,14 @@ func (s *OpenAIQuotaAutoResetService) syncCreditUsage(ctx context.Context, accou
 		s.fetchStates.Store(accountID, openAIAutoResetFetchState{nextAt: now.Add(openAIAutoResetCreditRefreshInterval), fetched: true, config: config})
 		s.armExpiryTimer(ctx, accountID, config, usage)
 	}
-	// 自动用卡进行中的尝试指纹不能被覆盖，否则重启后可能改选另一张卡。
-	if state := openAIAutoResetStateFromExtra(account.Extra); state != nil && state.Status == OpenAIAutoResetStatusResetting {
+	// 已进入提前窗口的卡排不了定时器，按到点语义打标记入队，是否用卡仍由实查后的最终校验决定。
+	if config.ExpiryEnabled && config.ExpiryLead > 0 && !usage.upstreamTime.IsZero() &&
+		openAIAutoResetCreditExpiring(openAIAutoResetCreditExpirations(usage.RateLimitResetCredits), config.ExpiryLead, usage.upstreamTime) {
+		s.expiryDue.Store(accountID, struct{}{})
+		s.Notify(accountID)
+	}
+	state := openAIAutoResetStateFromExtra(account.Extra)
+	if state != nil && state.Status == OpenAIAutoResetStatusResetting {
 		return
 	}
 	available := usage.RateLimitResetCredits.AvailableCount
@@ -1101,11 +1107,14 @@ func (s *OpenAIQuotaAutoResetService) syncCreditUsage(ctx context.Context, accou
 	if available > 0 {
 		status = OpenAIAutoResetStatusAvailable
 	}
-	if err := s.persistState(ctx, accountID, &OpenAIAutoResetCreditState{
+	synced := &OpenAIAutoResetCreditState{
 		Status:         status,
 		AvailableCount: available,
 		CheckedAt:      now.UTC().Format(time.RFC3339),
-	}); err != nil {
+	}
+	// 结果未明（超时失败）的尝试指纹必须保留，否则下一轮会改选另一张卡绕过幂等保护。
+	copyOpenAIAutoResetAttempt(synced, state)
+	if err := s.persistState(ctx, accountID, synced); err != nil {
 		slog.Warn("openai_auto_reset_state_sync_failed", "account_id", accountID, "error_code", infraerrors.Reason(err))
 	}
 }
