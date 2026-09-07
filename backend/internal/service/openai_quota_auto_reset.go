@@ -606,7 +606,7 @@ func (s *OpenAIQuotaAutoResetService) evaluateAccount(ctx context.Context, accou
 		return s.persistState(ctx, accountID, noCredit)
 	}
 	postCtx, cancelPost := context.WithTimeout(context.WithoutCancel(ctx), 8*time.Second)
-	post := RunOpenAIQuotaResetPostProcess(postCtx, accountID, s.quota, s.recoverer, s.accountRepo.GetByID)
+	post := RunOpenAIQuotaResetPostProcess(postCtx, accountID, s.quota, s.recoverer, s.accountRepo.GetByID, nil)
 	cancelPost()
 	if !post.AccountStateRecovered || post.WarningCode != "" {
 		code := post.WarningCode
@@ -1060,4 +1060,52 @@ func notifyOpenAIAutoReset(accountID int64) {
 // NotifyOpenAIAutoResetCredit 供额度查询入口发送轻量信号；不执行同步上游请求。
 func NotifyOpenAIAutoResetCredit(accountID int64) {
 	notifyOpenAIAutoReset(accountID)
+}
+
+// SyncOpenAIAutoResetCredit 把手动查询或手动用卡刚取到的上游结果交给调度器，不再额外请求上游。
+func SyncOpenAIAutoResetCredit(ctx context.Context, accountID int64, usage *OpenAIQuotaUsage) {
+	openAIAutoResetNotifierRegistry.RLock()
+	service := openAIAutoResetNotifierRegistry.service
+	openAIAutoResetNotifierRegistry.RUnlock()
+	if service != nil {
+		service.syncCreditUsage(ctx, accountID, usage)
+	}
+}
+
+// syncCreditUsage 让手动路径的实查结果顶替本轮计划取卡：领导实例据此重排到期定时器，
+// 避免列表继续显示已消耗卡的计划时刻；非领导实例只刷新运行态，定时器留给领导实例
+// 下一次计划取卡重排。
+func (s *OpenAIQuotaAutoResetService) syncCreditUsage(ctx context.Context, accountID int64, usage *OpenAIQuotaUsage) {
+	if s == nil || usage == nil || usage.RateLimitResetCredits == nil {
+		return
+	}
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil || account == nil || account.IsShadow() {
+		return
+	}
+	config := ResolveOpenAIAutoResetCreditConfig(account)
+	if !config.Active() {
+		return
+	}
+	now := time.Now()
+	if s.isSchedulerLeader() && !usage.upstreamTime.IsZero() {
+		s.fetchStates.Store(accountID, openAIAutoResetFetchState{nextAt: now.Add(openAIAutoResetCreditRefreshInterval), fetched: true, config: config})
+		s.armExpiryTimer(ctx, accountID, config, usage)
+	}
+	// 自动用卡进行中的尝试指纹不能被覆盖，否则重启后可能改选另一张卡。
+	if state := openAIAutoResetStateFromExtra(account.Extra); state != nil && state.Status == OpenAIAutoResetStatusResetting {
+		return
+	}
+	available := usage.RateLimitResetCredits.AvailableCount
+	status := OpenAIAutoResetStatusNoCredit
+	if available > 0 {
+		status = OpenAIAutoResetStatusAvailable
+	}
+	if err := s.persistState(ctx, accountID, &OpenAIAutoResetCreditState{
+		Status:         status,
+		AvailableCount: available,
+		CheckedAt:      now.UTC().Format(time.RFC3339),
+	}); err != nil {
+		slog.Warn("openai_auto_reset_state_sync_failed", "account_id", accountID, "error_code", infraerrors.Reason(err))
+	}
 }
