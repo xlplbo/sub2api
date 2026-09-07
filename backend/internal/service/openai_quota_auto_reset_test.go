@@ -969,8 +969,8 @@ func TestOpenAIQuotaAutoResetService_ManualCreditSyncRearmsExpiryTimer(t *testin
 	require.Nil(t, repo.account.Extra[OpenAIAutoResetCreditExpiryAtExtraKey], "撤销定时器后清空计划触发时刻")
 	state := openAIAutoResetStateFromExtra(repo.account.Extra)
 	require.NotNil(t, state)
-	require.Equal(t, OpenAIAutoResetStatusNoCredit, state.Status)
-	require.Equal(t, 0, state.AvailableCount)
+	require.Equal(t, OpenAIAutoResetStatusAvailable, state.Status, "运行态只由调度器实查后写入，手动同步不碰")
+	require.Equal(t, 1, state.AvailableCount)
 
 	regranted := newAutoResetLowUsage(now, "credit-new", now.Add(3*24*time.Hour))
 	service.syncCreditUsage(context.Background(), account.ID, regranted)
@@ -978,9 +978,6 @@ func TestOpenAIQuotaAutoResetService_ManualCreditSyncRearmsExpiryTimer(t *testin
 	require.True(t, armed, "手动查询到新卡后按新卡排定时器")
 	wantFireAt := now.Add(3 * 24 * time.Hour).Truncate(time.Second).Add(-24 * time.Hour).UTC().Format(time.RFC3339)
 	require.Equal(t, wantFireAt, repo.account.Extra[OpenAIAutoResetCreditExpiryAtExtraKey])
-	state = openAIAutoResetStateFromExtra(repo.account.Extra)
-	require.Equal(t, OpenAIAutoResetStatusAvailable, state.Status)
-	require.Equal(t, 1, state.AvailableCount)
 	require.Equal(t, int32(1), quota.queryCalls.Load(), "同步只用手动路径已取到的结果，不额外实查")
 }
 
@@ -1022,7 +1019,7 @@ func TestOpenAIQuotaAutoResetService_ManualCreditSyncKeepsInFlightAttempt(t *tes
 	require.True(t, armed, "定时器仍按最新卡信息重排")
 }
 
-func TestOpenAIQuotaAutoResetService_ManualCreditSyncOnFollowerOnlyUpdatesState(t *testing.T) {
+func TestOpenAIQuotaAutoResetService_ManualCreditSyncOnFollowerLeavesTimerToLeader(t *testing.T) {
 	now := time.Now().UTC()
 	lock := &fakeLeaderLockCache{owners: map[string]string{openAIAutoResetSchedulerLockKey: "someone-else"}}
 	account := newAutoResetLowUsageAccount(now, map[string]any{
@@ -1043,9 +1040,7 @@ func TestOpenAIQuotaAutoResetService_ManualCreditSyncOnFollowerOnlyUpdatesState(
 	_, armed := service.expiryTimers.Load(account.ID)
 	require.False(t, armed, "非领导实例不设定时器")
 	require.Equal(t, "2099-01-01T00:00:00Z", repo.account.Extra[OpenAIAutoResetCreditExpiryAtExtraKey], "计划时刻留给领导实例重排")
-	state := openAIAutoResetStateFromExtra(repo.account.Extra)
-	require.Equal(t, OpenAIAutoResetStatusAvailable, state.Status)
-	require.Equal(t, 1, state.AvailableCount)
+	require.Nil(t, repo.account.Extra[OpenAIAutoResetCreditStateExtraKey], "手动同步不写运行态")
 }
 
 func TestSyncOpenAIAutoResetCredit_DelegatesToRegisteredService(t *testing.T) {

@@ -1073,10 +1073,11 @@ func SyncOpenAIAutoResetCredit(ctx context.Context, accountID int64, usage *Open
 }
 
 // syncCreditUsage 让手动路径的实查结果顶替本轮计划取卡：领导实例据此重排到期定时器，
-// 避免列表继续显示已消耗卡的计划时刻；非领导实例只刷新运行态，定时器留给领导实例
-// 下一次计划取卡重排。
+// 避免列表继续显示已消耗卡的计划时刻；非领导实例不设定时器，留给领导实例下一次
+// 计划取卡重排。运行态一律不写：它与后台评估的读改写会互相覆盖尝试指纹，
+// 而张数与到期时刻已有独立标签展示，留给调度器实查后统一落库。
 func (s *OpenAIQuotaAutoResetService) syncCreditUsage(ctx context.Context, accountID int64, usage *OpenAIQuotaUsage) {
-	if s == nil || usage == nil || usage.RateLimitResetCredits == nil {
+	if s == nil || usage == nil || usage.RateLimitResetCredits == nil || usage.upstreamTime.IsZero() {
 		return
 	}
 	account, err := s.accountRepo.GetByID(ctx, accountID)
@@ -1087,34 +1088,14 @@ func (s *OpenAIQuotaAutoResetService) syncCreditUsage(ctx context.Context, accou
 	if !config.Active() {
 		return
 	}
-	now := time.Now()
-	if s.isSchedulerLeader() && !usage.upstreamTime.IsZero() {
-		s.fetchStates.Store(accountID, openAIAutoResetFetchState{nextAt: now.Add(openAIAutoResetCreditRefreshInterval), fetched: true, config: config})
+	if s.isSchedulerLeader() {
+		s.fetchStates.Store(accountID, openAIAutoResetFetchState{nextAt: time.Now().Add(openAIAutoResetCreditRefreshInterval), fetched: true, config: config})
 		s.armExpiryTimer(ctx, accountID, config, usage)
 	}
 	// 已进入提前窗口的卡排不了定时器，按到点语义打标记入队，是否用卡仍由实查后的最终校验决定。
-	if config.ExpiryEnabled && config.ExpiryLead > 0 && !usage.upstreamTime.IsZero() &&
+	if config.ExpiryEnabled && config.ExpiryLead > 0 &&
 		openAIAutoResetCreditExpiring(openAIAutoResetCreditExpirations(usage.RateLimitResetCredits), config.ExpiryLead, usage.upstreamTime) {
 		s.expiryDue.Store(accountID, struct{}{})
 		s.Notify(accountID)
-	}
-	state := openAIAutoResetStateFromExtra(account.Extra)
-	if state != nil && state.Status == OpenAIAutoResetStatusResetting {
-		return
-	}
-	available := usage.RateLimitResetCredits.AvailableCount
-	status := OpenAIAutoResetStatusNoCredit
-	if available > 0 {
-		status = OpenAIAutoResetStatusAvailable
-	}
-	synced := &OpenAIAutoResetCreditState{
-		Status:         status,
-		AvailableCount: available,
-		CheckedAt:      now.UTC().Format(time.RFC3339),
-	}
-	// 结果未明（超时失败）的尝试指纹必须保留，否则下一轮会改选另一张卡绕过幂等保护。
-	copyOpenAIAutoResetAttempt(synced, state)
-	if err := s.persistState(ctx, accountID, synced); err != nil {
-		slog.Warn("openai_auto_reset_state_sync_failed", "account_id", accountID, "error_code", infraerrors.Reason(err))
 	}
 }
