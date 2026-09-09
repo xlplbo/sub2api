@@ -1851,6 +1851,16 @@ func TestValidateConfigErrors(t *testing.T) {
 			wantErr: "gateway.openai_high_effort_first_output_timeout_seconds",
 		},
 		{
+			name:    "openai_transport_failure_block_seconds 不能为负数",
+			mutate:  func(c *Config) { c.Gateway.OpenAITransportFailureBlockSeconds = -1 },
+			wantErr: "gateway.openai_transport_failure_block_seconds",
+		},
+		{
+			name:    "openai_transport_failure_block_seconds 不能大于 600",
+			mutate:  func(c *Config) { c.Gateway.OpenAITransportFailureBlockSeconds = 601 },
+			wantErr: "gateway.openai_transport_failure_block_seconds",
+		},
+		{
 			name:    "gateway max idle conns",
 			mutate:  func(c *Config) { c.Gateway.MaxIdleConns = 0 },
 			wantErr: "gateway.max_idle_conns",

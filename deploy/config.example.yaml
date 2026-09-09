@@ -227,6 +227,12 @@ gateway:
   openai_first_output_timeout_seconds: 0
   # Optional high/xhigh/max override (seconds, 0=use the standard timeout)
   openai_high_effort_first_output_timeout_seconds: 0
+  # OpenAI upstream network-class transport failures (connection refused / DNS / unreachable / dial-phase timeout,
+  # no HTTP status) fail over at once; 3 within 60s on one account (HTTP and WS combined) block it for this many seconds.
+  # 0 = fail over only; range 0-600. Proxy credential failures always block for 10 minutes regardless.
+  # OpenAI 上游网络类传输失败（连接拒绝/DNS/不可达/拨号阶段超时，未收到 HTTP 状态码）立即换号；
+  # 同一账号 60 秒内累计 3 次（HTTP 与 WS 合并计数）则临时禁调度该秒数。0 表示只换号，取值 0-600。代理凭证类失败仍固定禁调度 10 分钟。
+  openai_transport_failure_block_seconds: 120
   # Max request body size in bytes (default: 256MB)
   # 请求体最大字节数（默认 256MB）
   max_body_size: 268435456

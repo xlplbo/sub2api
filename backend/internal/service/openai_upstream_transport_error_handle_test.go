@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -178,7 +179,7 @@ func TestTempUnscheduleOpenAITransportError_NilAccountRepo_InMemoryBlockOnly(t *
 	svc := &OpenAIGatewayService{accountRepo: nil}
 	account := &Account{ID: 55, Name: "no-db", Platform: PlatformOpenAI}
 
-	svc.tempUnscheduleOpenAITransportError(context.Background(), account, "proxy refused")
+	svc.tempUnscheduleOpenAITransportError(context.Background(), account, "proxy refused", openAITransportErrorTempUnschedDuration)
 
 	// In-memory block must still happen.
 	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account),
@@ -357,4 +358,113 @@ func TestHandleOpenAIAccountUpstreamError_RecordsOllamaActivityOnly(t *testing.T
 	require.True(t, ok, "Ollama Cloud non-2xx must schedule last_used activity")
 	_, ok = deferred.lastUsedUpdates.Load(int64(505))
 	require.False(t, ok, "non-Ollama non-2xx must not schedule Ollama activity")
+}
+
+func newOpenAISocksDialTimeoutError() error {
+	return fmt.Errorf("Post %q: %w", "https://chatgpt.com/backend-api/codex/responses", &net.OpError{
+		Op:  "socks connect",
+		Net: "tcp",
+		Err: &net.OpError{Op: "dial", Net: "tcp", Err: openAITransportTimeoutErr{}},
+	})
+}
+
+// 网络类失败（连接拒绝、拨号阶段超时）：前两次只换号，60 秒内第 3 次才封，时长为短封禁默认值而非 10 分钟。
+func TestHandleOpenAIUpstreamTransportError_NetworkClassBlocksOnThird(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		reason string
+	}{
+		{name: "连接拒绝", err: errors.New(`Post "https://chatgpt.com/backend-api/codex/responses": proxyconnect tcp: dial tcp 127.0.0.1:10809: connect: connection refused`), reason: "connection refused"},
+		{name: "拨号阶段超时", err: newOpenAISocksDialTimeoutError(), reason: "i/o timeout"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &openaiTransportAccountRepoStub{}
+			svc := &OpenAIGatewayService{accountRepo: repo}
+			account := &Account{ID: 152, Name: "proxy-flap", Platform: PlatformOpenAI}
+
+			for i := 1; i < openAITransportFailureThreshold; i++ {
+				c, _ := newOpenAITransportErrTestContext()
+				err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account, tc.err, false)
+				var fo *UpstreamFailoverError
+				require.True(t, errors.As(err, &fo), "每次失败都应换号")
+				require.False(t, svc.isOpenAIAccountRuntimeBlocked(account), "第 %d 次失败不应封禁", i)
+				require.Empty(t, repo.tempUnschedCalls)
+			}
+
+			c, _ := newOpenAITransportErrTestContext()
+			before := time.Now()
+			err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account, tc.err, false)
+			after := time.Now()
+			var fo *UpstreamFailoverError
+			require.True(t, errors.As(err, &fo))
+			require.True(t, svc.isOpenAIAccountRuntimeBlocked(account), "第 3 次失败应临时禁调度")
+			require.Len(t, repo.tempUnschedCalls, 1)
+			require.Contains(t, repo.tempUnschedCalls[0].reason, tc.reason)
+			require.True(t, repo.tempUnschedCalls[0].until.After(before.Add(openAITransportFailureBlockDefault-time.Second)))
+			require.True(t, repo.tempUnschedCalls[0].until.Before(after.Add(openAITransportFailureBlockDefault+time.Second)))
+		})
+	}
+}
+
+// 等响应头超时是上游慢或挂起，不是拨号阶段问题：只换号，不计数不封。
+func TestHandleOpenAIUpstreamTransportError_ResponseHeaderTimeoutNeverBlocks(t *testing.T) {
+	repo := &openaiTransportAccountRepoStub{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 160, Name: "slow-upstream", Platform: PlatformOpenAI}
+	headerTimeout := errors.New(`Post "https://chatgpt.com/backend-api/codex/responses": net/http: timeout awaiting response headers`)
+
+	for i := 0; i <= openAITransportFailureThreshold; i++ {
+		c, _ := newOpenAITransportErrTestContext()
+		err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account, headerTimeout, false)
+		var fo *UpstreamFailoverError
+		require.True(t, errors.As(err, &fo))
+	}
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Empty(t, repo.tempUnschedCalls)
+}
+
+// HTTP 与 WS 是同一账号同一代理的失败，共用一个计数窗口。
+func TestHandleOpenAIUpstreamTransportError_SharesWindowWithWSDial(t *testing.T) {
+	repo := &openaiTransportAccountRepoStub{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 161, Name: "shared-window", Platform: PlatformOpenAI}
+	wsErr := &openAIWSDialError{Err: &openAIWSHandshakeError{Err: fmt.Errorf("failed to WebSocket dial: %w", context.DeadlineExceeded)}}
+
+	for i := 1; i < openAITransportFailureThreshold; i++ {
+		require.NotNil(t, svc.handleOpenAIWSDialTransportFailure(context.Background(), account, 1, wsErr))
+	}
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+
+	c, _ := newOpenAITransportErrTestContext()
+	_ = svc.handleOpenAIUpstreamTransportError(context.Background(), c, account,
+		errors.New(`dial tcp 127.0.0.1:10809: connect: connection refused`), false)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account), "WS 两次加 HTTP 一次应触发封禁")
+	require.Len(t, repo.tempUnschedCalls, 1)
+}
+
+// 配置为 0：网络类失败只换号永不封；凭证类失败不受该配置影响，仍一次即封 10 分钟。
+func TestHandleOpenAIUpstreamTransportError_BlockDisabledKeepsCredentialBlock(t *testing.T) {
+	repo := &openaiTransportAccountRepoStub{}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAITransportFailureBlockSeconds = 0
+	svc := &OpenAIGatewayService{cfg: cfg, accountRepo: repo}
+	account := &Account{ID: 162, Name: "block-off", Platform: PlatformOpenAI}
+	refused := errors.New(`dial tcp 127.0.0.1:10809: connect: connection refused`)
+
+	for i := 0; i <= openAITransportFailureThreshold; i++ {
+		c, _ := newOpenAITransportErrTestContext()
+		_ = svc.handleOpenAIUpstreamTransportError(context.Background(), c, account, refused, false)
+	}
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Empty(t, repo.tempUnschedCalls)
+
+	c, _ := newOpenAITransportErrTestContext()
+	before := time.Now()
+	_ = svc.handleOpenAIUpstreamTransportError(context.Background(), c, account,
+		errors.New(`socks connect tcp 1.2.3.4:1080->chatgpt.com:443: username/password authentication failed`), false)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Len(t, repo.tempUnschedCalls, 1)
+	require.True(t, repo.tempUnschedCalls[0].until.After(before.Add(openAITransportErrorTempUnschedDuration-time.Second)))
 }
