@@ -9,6 +9,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func NewTestConcurrencyCache(t *testing.T) service.ConcurrencyCache {
+	t.Helper()
+	redisClient := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	return repository.NewConcurrencyCache(redisClient, 1, 60)
+}
+
 // NewRedisGatewayCache returns a real Redis-backed gateway cache for tests.
 func NewRedisGatewayCache(t *testing.T) service.GatewayCache {
 	t.Helper()
