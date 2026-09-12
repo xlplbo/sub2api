@@ -894,6 +894,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			}
 			continue
 		}
+		if failoverErr := s.handleOpenAIWSDialTransportFailure(ctx, c, account, 1, dialErr, true); failoverErr != nil {
+			return failoverErr
+		}
 		logOpenAIWSV2Passthrough(
 			"relay_dial_failed account_id=%d status_code=%d err=%s",
 			account.ID,
