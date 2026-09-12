@@ -38,7 +38,7 @@ func (d *openAIWSFailingDialer) Dial(
 }
 
 // 场景：账号所绑代理断开，WS 拨号在传输层失败（无 HTTP 状态码）。
-// 每次请求都应返回可换号的错误交给 handler 切账号，60 秒内第 3 次失败后账号被临时禁调度。
+// 首次拒连即返回可换号的错误交给 handler 切账号，并临时禁调度 10 分钟。
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DialTransportFailureFailsOver(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -56,7 +56,6 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DialTransportFai
 	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
-	cfg.Gateway.OpenAITransportFailureBlockSeconds = 120
 
 	dialer := &openAIWSFailingDialer{
 		err: &openAIWSHandshakeError{Err: errors.New("failed to WebSocket dial: dial tcp 127.0.0.1:10809: connect: connection refused")},
@@ -137,17 +136,13 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DialTransportFai
 		}
 	}
 
-	for i := 1; i <= openAITransportFailureThreshold-1; i++ {
-		failoverErr := runFailedSession()
-		require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-		require.True(t, failoverErr.ShouldRetryNextAccount())
-		require.JSONEq(t, string(openAITransportFailoverBody), string(failoverErr.ResponseBody))
-		require.False(t, svc.isOpenAIAccountRuntimeBlocked(account), "第 %d 次失败不应封禁", i)
-	}
 	failoverErr := runFailedSession()
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.True(t, failoverErr.ShouldRetryNextAccount())
-	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account), "60 秒内第 3 次失败应临时禁调度")
-	require.Equal(t, int32(openAITransportFailureThreshold), dialer.calls.Load())
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.JSONEq(t, string(openAITransportFailoverBody), string(failoverErr.ResponseBody))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account), "首次拒连应立即临时禁调度")
+	require.Equal(t, int32(1), dialer.calls.Load())
 }
 
 type openAIWSDialThenFailDialer struct {
@@ -203,7 +198,6 @@ func runOpenAIWSLaterTurnDialFailureSession(t *testing.T, cfg *config.Config, tu
 	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
-	cfg.Gateway.OpenAITransportFailureBlockSeconds = 120
 
 	events := [][]byte{
 		[]byte(`{"type":"response.completed","response":{"id":"resp_first","model":"gpt-5.1","output":[{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"first-ok"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}`),

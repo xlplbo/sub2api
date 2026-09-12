@@ -907,7 +907,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			)
 			var dialErr *openAIWSDialError
 			if errors.As(acquireErr, &dialErr) && dialErr != nil {
-				if failoverErr := s.handleOpenAIWSDialTransportFailure(ctx, account, turn, dialErr); failoverErr != nil {
+				if failoverErr := s.handleOpenAIWSDialTransportFailure(ctx, c, account, turn, dialErr, false); failoverErr != nil {
 					return nil, failoverErr
 				}
 				if dialErr.StatusCode == http.StatusTooManyRequests {
