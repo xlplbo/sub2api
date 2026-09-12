@@ -548,7 +548,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		if err != nil {
-			if turn == 1 {
+			if turn == 1 || account.IsOpenAI() {
 				return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
 			}
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
