@@ -1593,6 +1593,28 @@
           </p>
         </div>
 
+        <div
+          v-if="supportsLivePlatform(createForm.platform)"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+            {{ t("admin.groups.codexWsOnly.title") }}
+          </h4>
+          <div class="flex items-center justify-between gap-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.codexWsOnly.enable") }}
+            </label>
+            <Toggle
+              v-model="createForm.codex_ws_only"
+              data-testid="create-codex-ws-only"
+              :aria-label="t('admin.groups.codexWsOnly.enable')"
+            />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.codexWsOnly.hint") }}
+          </p>
+        </div>
+
         <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
         <div
           v-if="supportsLivePlatform(createForm.platform)"
@@ -3240,6 +3262,28 @@
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {{ t("admin.groups.openaiFast.freeHint") }}
+          </p>
+        </div>
+
+        <div
+          v-if="supportsLivePlatform(editForm.platform)"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+            {{ t("admin.groups.codexWsOnly.title") }}
+          </h4>
+          <div class="flex items-center justify-between gap-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.codexWsOnly.enable") }}
+            </label>
+            <Toggle
+              v-model="editForm.codex_ws_only"
+              data-testid="edit-codex-ws-only"
+              :aria-label="t('admin.groups.codexWsOnly.enable')"
+            />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.codexWsOnly.hint") }}
           </p>
         </div>
 
@@ -4941,6 +4985,7 @@ const createForm = reactive({
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
+  codex_ws_only: false,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -5306,6 +5351,7 @@ const editForm = reactive({
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
+  codex_ws_only: false,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -5783,6 +5829,7 @@ const closeCreateModal = () => {
   createForm.long_context_pricing_enabled = true;
   createForm.force_openai_fast = false;
   createForm.free_openai_fast = false;
+  createForm.codex_ws_only = false;
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
@@ -5900,6 +5947,8 @@ const handleCreateGroup = async () => {
         createForm.platform,
         createForm.free_openai_fast,
       ),
+      codex_ws_only:
+        supportsLivePlatform(createForm.platform) && createForm.codex_ws_only,
       model_pricing: groupPricingToAPI(
         createForm.model_pricing,
         createForm.platform,
@@ -6039,6 +6088,7 @@ const handleEdit = async (group: AdminGroup) => {
     group.long_context_pricing_enabled ?? true;
   editForm.force_openai_fast = group.force_openai_fast ?? false;
   editForm.free_openai_fast = group.free_openai_fast ?? false;
+  editForm.codex_ws_only = group.codex_ws_only ?? false;
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
   editForm.allow_image_generation = group.allow_image_generation ?? false;
   editForm.allow_batch_image_generation =
@@ -6173,6 +6223,7 @@ const closeEditModal = () => {
   editForm.long_context_pricing_enabled = true;
   editForm.force_openai_fast = false;
   editForm.free_openai_fast = false;
+  editForm.codex_ws_only = false;
   editForm.model_pricing = [];
   editForm.web_search_price_per_call = null;
   editForm.search_price_per_1k = null;
@@ -6235,6 +6286,8 @@ const handleUpdateGroup = async () => {
         editForm.platform,
         editForm.free_openai_fast,
       ),
+      codex_ws_only:
+        supportsLivePlatform(editForm.platform) && editForm.codex_ws_only,
       model_pricing: groupPricingToAPI(
         editForm.model_pricing,
         editForm.platform,
@@ -6664,6 +6717,7 @@ watch(
     }
     if (!supportsLivePlatform(newVal)) {
       createForm.allow_live = false;
+      createForm.codex_ws_only = false;
     }
     if (!isProfitControlPlatform(newVal)) {
       createForm.profit_control_enabled = false;
@@ -6721,6 +6775,7 @@ watch(
     }
     if (!supportsLivePlatform(newVal)) {
       editForm.allow_live = false;
+      editForm.codex_ws_only = false;
     }
     if (!isProfitControlPlatform(newVal)) {
       editForm.profit_control_enabled = false;

@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -230,6 +231,45 @@ func TestAPIKeyService_GetByKey_UsesL2Cache(t *testing.T) {
 	require.Equal(t, groupID, apiKey.Group.ID)
 	require.True(t, apiKey.Group.ModelRoutingEnabled)
 	require.Equal(t, map[string][]int64{"claude-opus-*": {1, 2}}, apiKey.Group.ModelRouting)
+}
+
+func TestAPIKeyService_GetByKey_ReloadsV24SnapshotWithoutCodexWSOnly(t *testing.T) {
+	const keyValue = "sk-legacy-codex-ws-only"
+	const payload = `{"snapshot":{"version":24,"api_key_id":1,"user_id":2,"group_id":9,"status":"active","user":{"id":2,"status":"active","role":"user","balance":10,"concurrency":3},"group":{"id":9,"name":"openai","platform":"openai","status":"active","subscription_type":"standard","rate_multiplier":1}}}`
+	var cached APIKeyAuthCacheEntry
+	require.NoError(t, json.Unmarshal([]byte(payload), &cached))
+	groupID := int64(9)
+	dbReads := 0
+	repo := &authRepoStub{
+		getByKeyForAuth: func(ctx context.Context, key string) (*APIKey, error) {
+			require.Equal(t, keyValue, key)
+			dbReads++
+			return &APIKey{
+				ID: 1, UserID: 2, GroupID: &groupID, Key: keyValue, Status: StatusActive,
+				User: &User{ID: 2, Status: StatusActive, Role: RoleUser, Balance: 10, Concurrency: 3},
+				Group: &Group{
+					ID: groupID, Name: "openai", Platform: PlatformOpenAI, Status: StatusActive,
+					SubscriptionType: SubscriptionTypeStandard, RateMultiplier: 1,
+					Hydrated: true, CodexWSOnly: true,
+				},
+			}, nil
+		},
+	}
+	cache := &authCacheStub{
+		getAuthCache: func(ctx context.Context, key string) (*APIKeyAuthCacheEntry, error) {
+			return &cached, nil
+		},
+	}
+	svc := NewAPIKeyService(repo, nil, nil, nil, nil, cache, &config.Config{
+		APIKeyAuth: config.APIKeyAuthCacheConfig{L2TTLSeconds: 300},
+	})
+
+	apiKey, err := svc.GetByKey(context.Background(), keyValue)
+
+	require.NoError(t, err)
+	require.NotNil(t, apiKey.Group)
+	require.True(t, apiKey.Group.CodexWSOnly, "legacy cache must not disable the current group policy")
+	require.Equal(t, 1, dbReads, "legacy snapshot must be reloaded from the database")
 }
 
 func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t *testing.T) {

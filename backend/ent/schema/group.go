@@ -245,6 +245,9 @@ func (Group) Fields() []ent.Field {
 		field.Bool("force_openai_fast").
 			Default(false).
 			Comment("是否强制此 OpenAI/Composite 分组请求使用 service_tier=priority"),
+		field.Bool("codex_ws_only").
+			Default(false).
+			Comment("是否仅允许 Codex 通过 WebSocket 发起 Responses 生成请求"),
 		field.Bool("free_openai_fast").
 			Default(false).
 			Comment("是否让此 OpenAI/Composite 分组的 Fast 请求按 Standard 价格计费"),

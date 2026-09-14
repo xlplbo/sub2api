@@ -1206,6 +1206,11 @@ export default {
         free: '免费 Fast',
         freeHint: '该分组的 Fast 请求仍使用 priority 档位，但客户实际费用按同一请求的 Standard 价格计算。'
       },
+      codexWsOnly: {
+        title: 'Codex WebSocket 准入',
+        enable: 'Codex 仅允许 WS 接入',
+        hint: '开启后，将拒绝 Codex 的 HTTP 生成请求，包括从 WebSocket 回退到 HTTP 的请求。请在客户端启用 WebSocket，并重建客户端会话。仅限制入站接入，不改变上游协议或回退。'
+      },
       invalidRequestFallback: {
         title: '无效请求兜底分组',
         hint: '仅当上游明确返回 prompt too long 时才会触发，留空表示不兜底',

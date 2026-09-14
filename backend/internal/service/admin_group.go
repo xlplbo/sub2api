@@ -357,6 +357,12 @@ func sanitizeGroupOpenAIFast(group *Group) {
 	}
 }
 
+func sanitizeGroupCodexWSOnly(group *Group) {
+	if group != nil && group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
+		group.CodexWSOnly = false
+	}
+}
+
 func normalizeCreateGroupInputForSimpleMode(input *CreateGroupInput) {
 	if input == nil {
 		return
@@ -601,6 +607,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		AllowMessagesDispatch:           input.AllowMessagesDispatch,
 		AllowLive:                       input.AllowLive,
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
+		CodexWSOnly:                     input.CodexWSOnly,
 		FreeOpenAIFast:                  input.FreeOpenAIFast,
 		RequireOAuthOnly:                input.RequireOAuthOnly,
 		RequirePrivacySet:               input.RequirePrivacySet,
@@ -617,6 +624,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	sanitizeGroupCodexWSOnly(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
@@ -981,6 +989,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.ForceOpenAIFast != nil {
 		group.ForceOpenAIFast = *input.ForceOpenAIFast
 	}
+	if input.CodexWSOnly != nil {
+		group.CodexWSOnly = *input.CodexWSOnly
+	}
 	if input.FreeOpenAIFast != nil {
 		group.FreeOpenAIFast = *input.FreeOpenAIFast
 	}
@@ -1032,6 +1043,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	sanitizeGroupCodexWSOnly(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}

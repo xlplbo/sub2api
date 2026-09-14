@@ -1208,6 +1208,11 @@ export default {
         free: 'Free Fast',
         freeHint: 'Fast requests in this group still use the priority tier, but customers are charged the equivalent Standard price.'
       },
+      codexWsOnly: {
+        title: 'Codex WebSocket access',
+        enable: 'Allow Codex access via WS only',
+        hint: 'Rejects Codex HTTP generation requests, including requests that fall back from WebSocket to HTTP. Enable WebSocket in the client and start a new client session. This only restricts inbound access; upstream protocols and fallbacks are unchanged.'
+      },
       invalidRequestFallback: {
         title: 'Invalid Request Fallback Group',
         hint: 'Triggered only when upstream explicitly returns prompt too long. Leave empty to disable fallback.',

@@ -168,6 +168,8 @@ type AdminGroup struct {
 	Group
 	// ForceOpenAIFast 是管理端请求策略，用户侧分组 DTO 无需暴露。
 	ForceOpenAIFast bool `json:"force_openai_fast"`
+	// CodexWSOnly 是管理端 Codex 入站准入策略，用户侧分组 DTO 无需暴露。
+	CodexWSOnly bool `json:"codex_ws_only"`
 	// FreeOpenAIFast 是管理端计费策略，用户侧分组 DTO 无需暴露。
 	FreeOpenAIFast bool `json:"free_openai_fast"`
 
