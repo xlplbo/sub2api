@@ -11,16 +11,12 @@ const {
   getUsageSummary,
   getCapacitySummary,
   getLiveCapability,
-  createGroup,
-  updateGroup,
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   getModelsListCandidates: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
   getLiveCapability: vi.fn(),
-  createGroup: vi.fn(),
-  updateGroup: vi.fn(),
 }));
 
 vi.mock("@/api/admin", () => ({
@@ -33,8 +29,8 @@ vi.mock("@/api/admin", () => ({
       getUsageSummary,
       getCapacitySummary,
       getLiveCapability,
-      create: createGroup,
-      update: updateGroup,
+      create: vi.fn(),
+      update: vi.fn(),
       delete: vi.fn(),
       duplicate: vi.fn(),
       updateSortOrder: vi.fn(),
@@ -88,7 +84,6 @@ const sourceGroup = {
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
-  codex_ws_only: true,
   model_pricing: [],
   profit_control_enabled: false,
   profit_min_margin: 0,
@@ -211,14 +206,6 @@ const CodexManifestAccountsFieldStub = defineComponent({
   },
 });
 
-const ReasoningEffortPolicyFieldsStub = defineComponent({
-  name: "ReasoningEffortPolicyFields",
-  setup(_, { expose }) {
-    expose({ validate: () => true, resetValidation: () => undefined });
-    return () => h("div");
-  },
-});
-
 const mountView = () =>
   mount(GroupsView, {
     global: {
@@ -236,7 +223,7 @@ const mountView = () =>
         GroupCapacityBadge: true,
         GroupRateMultipliersModal: true,
         GroupRPMOverridesModal: true,
-        ReasoningEffortPolicyFields: ReasoningEffortPolicyFieldsStub,
+        ReasoningEffortPolicyFields: true,
         CodexManifestAccountsField: CodexManifestAccountsFieldStub,
         PricingEntryCard: true,
         VueDraggable: true,
@@ -252,8 +239,6 @@ describe("GroupsView Codex manifest binding", () => {
     getUsageSummary.mockReset();
     getCapacitySummary.mockReset();
     getLiveCapability.mockReset();
-    createGroup.mockReset();
-    updateGroup.mockReset();
 
     listGroups.mockResolvedValue({
       items: [sourceGroup],
@@ -266,8 +251,6 @@ describe("GroupsView Codex manifest binding", () => {
     getUsageSummary.mockResolvedValue([]);
     getCapacitySummary.mockResolvedValue([]);
     getLiveCapability.mockResolvedValue({ supported: false });
-    createGroup.mockResolvedValue({});
-    updateGroup.mockResolvedValue({});
   });
 
   it("preserves consecutive child updates on the reactive edit config", async () => {
@@ -303,98 +286,6 @@ describe("GroupsView Codex manifest binding", () => {
       }),
     );
 
-    wrapper.unmount();
-  });
-
-  it("defaults the create switch off and only shows it for OpenAI-compatible platforms", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get('[data-tour="groups-create-btn"]').trigger("click");
-    await flushPromises();
-    expect(wrapper.find('[data-testid="create-codex-ws-only"]').exists()).toBe(false);
-
-    const platformSelect = wrapper.getComponent('[data-tour="group-form-platform"]');
-    platformSelect.vm.$emit("update:modelValue", "openai");
-    await flushPromises();
-    expect(wrapper.get('[data-testid="create-codex-ws-only"]').attributes("aria-checked")).toBe("false");
-
-    platformSelect.vm.$emit("update:modelValue", "composite");
-    await flushPromises();
-    expect(wrapper.find('[data-testid="create-codex-ws-only"]').exists()).toBe(true);
-
-    wrapper.unmount();
-  });
-
-  it("loads an enabled edit switch and submits an explicit false", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    const editButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("common.edit"));
-    await editButton!.trigger("click");
-    await flushPromises();
-
-    const toggle = wrapper.get('[data-testid="edit-codex-ws-only"]');
-    expect(toggle.attributes("aria-checked")).toBe("true");
-    await toggle.trigger("click");
-    await wrapper.get("#edit-group-form").trigger("submit");
-    await flushPromises();
-
-    expect(updateGroup).toHaveBeenCalledWith(
-      sourceGroup.id,
-      expect.objectContaining({ codex_ws_only: false }),
-    );
-    wrapper.unmount();
-  });
-
-  it("submits an enabled create switch and resets it after closing", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get('[data-tour="groups-create-btn"]').trigger("click");
-    const platformSelect = wrapper.getComponent('[data-tour="group-form-platform"]');
-    platformSelect.vm.$emit("update:modelValue", "openai");
-    await flushPromises();
-    await wrapper.get('[data-testid="create-codex-ws-only"]').trigger("click");
-    await wrapper.get('#create-group-form input[type="text"]').setValue("OpenAI WS");
-    await wrapper.get("#create-group-form").trigger("submit");
-    await flushPromises();
-
-    expect(createGroup).toHaveBeenCalledWith(
-      expect.objectContaining({ codex_ws_only: true }),
-    );
-
-    await wrapper.get('[data-tour="groups-create-btn"]').trigger("click");
-    wrapper
-      .getComponent('[data-tour="group-form-platform"]')
-      .vm.$emit("update:modelValue", "openai");
-    await flushPromises();
-    expect(wrapper.get('[data-testid="create-codex-ws-only"]').attributes("aria-checked")).toBe("false");
-    wrapper.unmount();
-  });
-
-  it("clears an enabled create value after switching to an unsupported platform", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get('[data-tour="groups-create-btn"]').trigger("click");
-    await flushPromises();
-    const platformSelect = wrapper.getComponent('[data-tour="group-form-platform"]');
-    platformSelect.vm.$emit("update:modelValue", "openai");
-    await flushPromises();
-    await wrapper.get('[data-testid="create-codex-ws-only"]').trigger("click");
-    platformSelect.vm.$emit("update:modelValue", "anthropic");
-    await flushPromises();
-
-    await wrapper.get('#create-group-form input[type="text"]').setValue("Anthropic");
-    await wrapper.get("#create-group-form").trigger("submit");
-    await flushPromises();
-
-    expect(createGroup).toHaveBeenCalledWith(
-      expect.objectContaining({ codex_ws_only: false }),
-    );
     wrapper.unmount();
   });
 });

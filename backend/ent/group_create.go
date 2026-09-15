@@ -718,20 +718,6 @@ func (_c *GroupCreate) SetNillableForceOpenaiFast(v *bool) *GroupCreate {
 	return _c
 }
 
-// SetCodexWsOnly sets the "codex_ws_only" field.
-func (_c *GroupCreate) SetCodexWsOnly(v bool) *GroupCreate {
-	_c.mutation.SetCodexWsOnly(v)
-	return _c
-}
-
-// SetNillableCodexWsOnly sets the "codex_ws_only" field if the given value is not nil.
-func (_c *GroupCreate) SetNillableCodexWsOnly(v *bool) *GroupCreate {
-	if v != nil {
-		_c.SetCodexWsOnly(*v)
-	}
-	return _c
-}
-
 // SetFreeOpenaiFast sets the "free_openai_fast" field.
 func (_c *GroupCreate) SetFreeOpenaiFast(v bool) *GroupCreate {
 	_c.mutation.SetFreeOpenaiFast(v)
@@ -1169,10 +1155,6 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultForceOpenaiFast
 		_c.mutation.SetForceOpenaiFast(v)
 	}
-	if _, ok := _c.mutation.CodexWsOnly(); !ok {
-		v := group.DefaultCodexWsOnly
-		_c.mutation.SetCodexWsOnly(v)
-	}
 	if _, ok := _c.mutation.FreeOpenaiFast(); !ok {
 		v := group.DefaultFreeOpenaiFast
 		_c.mutation.SetFreeOpenaiFast(v)
@@ -1378,9 +1360,6 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.ForceOpenaiFast(); !ok {
 		return &ValidationError{Name: "force_openai_fast", err: errors.New(`ent: missing required field "Group.force_openai_fast"`)}
-	}
-	if _, ok := _c.mutation.CodexWsOnly(); !ok {
-		return &ValidationError{Name: "codex_ws_only", err: errors.New(`ent: missing required field "Group.codex_ws_only"`)}
 	}
 	if _, ok := _c.mutation.FreeOpenaiFast(); !ok {
 		return &ValidationError{Name: "free_openai_fast", err: errors.New(`ent: missing required field "Group.free_openai_fast"`)}
@@ -1673,10 +1652,6 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ForceOpenaiFast(); ok {
 		_spec.SetField(group.FieldForceOpenaiFast, field.TypeBool, value)
 		_node.ForceOpenaiFast = value
-	}
-	if value, ok := _c.mutation.CodexWsOnly(); ok {
-		_spec.SetField(group.FieldCodexWsOnly, field.TypeBool, value)
-		_node.CodexWsOnly = value
 	}
 	if value, ok := _c.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
@@ -2757,18 +2732,6 @@ func (u *GroupUpsert) SetForceOpenaiFast(v bool) *GroupUpsert {
 // UpdateForceOpenaiFast sets the "force_openai_fast" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateForceOpenaiFast() *GroupUpsert {
 	u.SetExcluded(group.FieldForceOpenaiFast)
-	return u
-}
-
-// SetCodexWsOnly sets the "codex_ws_only" field.
-func (u *GroupUpsert) SetCodexWsOnly(v bool) *GroupUpsert {
-	u.Set(group.FieldCodexWsOnly, v)
-	return u
-}
-
-// UpdateCodexWsOnly sets the "codex_ws_only" field to the value that was provided on create.
-func (u *GroupUpsert) UpdateCodexWsOnly() *GroupUpsert {
-	u.SetExcluded(group.FieldCodexWsOnly)
 	return u
 }
 
@@ -4018,20 +3981,6 @@ func (u *GroupUpsertOne) SetForceOpenaiFast(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateForceOpenaiFast() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateForceOpenaiFast()
-	})
-}
-
-// SetCodexWsOnly sets the "codex_ws_only" field.
-func (u *GroupUpsertOne) SetCodexWsOnly(v bool) *GroupUpsertOne {
-	return u.Update(func(s *GroupUpsert) {
-		s.SetCodexWsOnly(v)
-	})
-}
-
-// UpdateCodexWsOnly sets the "codex_ws_only" field to the value that was provided on create.
-func (u *GroupUpsertOne) UpdateCodexWsOnly() *GroupUpsertOne {
-	return u.Update(func(s *GroupUpsert) {
-		s.UpdateCodexWsOnly()
 	})
 }
 
@@ -5478,20 +5427,6 @@ func (u *GroupUpsertBulk) SetForceOpenaiFast(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateForceOpenaiFast() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateForceOpenaiFast()
-	})
-}
-
-// SetCodexWsOnly sets the "codex_ws_only" field.
-func (u *GroupUpsertBulk) SetCodexWsOnly(v bool) *GroupUpsertBulk {
-	return u.Update(func(s *GroupUpsert) {
-		s.SetCodexWsOnly(v)
-	})
-}
-
-// UpdateCodexWsOnly sets the "codex_ws_only" field to the value that was provided on create.
-func (u *GroupUpsertBulk) UpdateCodexWsOnly() *GroupUpsertBulk {
-	return u.Update(func(s *GroupUpsert) {
-		s.UpdateCodexWsOnly()
 	})
 }
 
