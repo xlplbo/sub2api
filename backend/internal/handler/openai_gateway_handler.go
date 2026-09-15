@@ -2541,8 +2541,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
 	var wsTurnSucceededSinceFailover atomic.Bool
-	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
-		if account == nil || failoverErr == nil || failoverErr.StatusCode != http.StatusTooManyRequests || failoverErr.SameAccountRetryDeadline.IsZero() {
+	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError, handshakeFailure bool) bool {
+		if account == nil || failoverErr == nil || !failoverErr.ShouldRetryNextAccount() {
+			return false
+		}
+		if !handshakeFailure && (failoverErr.StatusCode != http.StatusTooManyRequests || failoverErr.SameAccountRetryDeadline.IsZero()) {
 			return false
 		}
 		retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
@@ -3069,7 +3072,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						zap.Int("retry_payload_bytes", len(retryPayload)),
 					)
 				}
-				if waitForWSSameAccountRetry(account, failoverErr) {
+				handshakeFailure := service.IsOpenAIWSHandshakeFailover(err)
+				if handshakeFailure {
+					var cleanupReadAhead func()
+					ctx, cleanupReadAhead = service.BeginOpenAIWSClientReadAhead(ctx, wsConn)
+					defer cleanupReadAhead()
+					c.Request = c.Request.WithContext(ctx)
+				}
+				if waitForWSSameAccountRetry(account, failoverErr, handshakeFailure) {
 					if failoverErr.ShouldReportAccountScheduleFailure() {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, wsForwardModel, false, nil), false, nil, err)
 					}
