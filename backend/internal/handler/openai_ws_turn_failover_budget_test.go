@@ -60,7 +60,7 @@ func TestOpenAIWSTurnFailoverBudget(t *testing.T) {
 				},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					conn, repo, attempts := newOpenAIWSTurnBudgetSession(t, mode, tc.responses)
+					conn, repo, attempts := newOpenAIWSTurnBudgetSession(t, mode, tc.responses, nil)
 					for turn, eventType := range tc.clientEvents {
 						if turn == 1 && tc.keepCooldown {
 							require.NoError(t, repo.SetTempUnschedulable(context.Background(), 801, time.Now().Add(time.Hour), "test cooldown"))
@@ -78,7 +78,7 @@ func TestOpenAIWSTurnFailoverBudget(t *testing.T) {
 							require.Equal(t, eventType, gjson.GetBytes(event, "type").String())
 						}
 					}
-					gotAccounts, gotTurns := attempts()
+					gotAccounts, gotTurns, _ := attempts()
 					require.Equal(t, tc.wantAccounts, gotAccounts)
 					if !tc.wantLastClose {
 						require.Equal(t, []string{"turn-1", "turn-1", "turn-2", "turn-2"}, gotTurns, "failover must replay the current turn")
@@ -151,17 +151,20 @@ func (r *openAIWSTurnBudgetAccountRepo) SetTempUnschedulable(_ context.Context, 
 	return nil
 }
 
-func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string) (*coderws.Conn, *openAIWSTurnBudgetAccountRepo, func() ([]int64, []string)) {
+func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string, channelMapping map[string]string) (*coderws.Conn, *openAIWSTurnBudgetAccountRepo, func() ([]int64, []string, []string)) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	var mu sync.Mutex
 	var accountIDs []int64
 	var turns []string
+	var models []string
 	responseFor := func(accountID int64, payload []byte) (string, []byte) {
 		mu.Lock()
 		defer mu.Unlock()
 		accountIDs = append(accountIDs, accountID)
 		turns = append(turns, gjson.GetBytes(payload, "instructions").String())
+		model := gjson.GetBytes(payload, "model").String()
+		models = append(models, model)
 		attempt := len(accountIDs)
 		if attempt > len(responses) {
 			t.Errorf("unexpected upstream attempt %d on account %d", attempt, accountID)
@@ -171,7 +174,7 @@ func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string)
 		if eventType == "429" {
 			return eventType, []byte(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"rate_limit_error","message":"rate limit exceeded"}}`)
 		}
-		return eventType, []byte(fmt.Sprintf(`{"type":%q,"response":{"id":"resp_budget_%d","model":"gpt-5.1","output":[],"usage":{"input_tokens":2,"output_tokens":1}}}`, eventType, attempt))
+		return eventType, []byte(fmt.Sprintf(`{"type":%q,"response":{"id":"resp_budget_%d","model":%q,"output":[],"usage":{"input_tokens":2,"output_tokens":1}}}`, eventType, attempt, model))
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var accountID int64
@@ -180,7 +183,7 @@ func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if mode == service.OpenAIWSIngressModeHTTPBridge {
+		if !isOpenAIWSUpgradeRequest(r) {
 			payload, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Error(err)
@@ -243,16 +246,27 @@ func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string)
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
 	usage := &openAIWSUsageHandlerUsageLogRepoStub{}
+	groupID := int64(4202)
+	var channelSvc *service.ChannelService
+	if len(channelMapping) > 0 {
+		channelSvc = service.NewChannelService(&openAIWSUsageHandlerChannelRepoStub{
+			channels: []service.Channel{{
+				ID: 7702, Name: "ws-failover-model", Status: service.StatusActive,
+				GroupIDs:     []int64{groupID},
+				ModelMapping: map[string]map[string]string{service.PlatformOpenAI: channelMapping},
+			}},
+			groupPlatforms: map[int64]string{groupID: service.PlatformOpenAI},
+		}, nil, nil, nil, nil)
+	}
 	gateway := service.NewOpenAIGatewayService(repo, usage, nil, nil, nil, nil, nil, cfg, nil, nil,
 		service.NewBillingService(cfg, nil), nil, billing, openAIWSTurnBudgetHTTPClient{},
-		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
+		&service.DeferredService{}, nil, nil, nil, channelSvc, nil, nil, nil)
 	t.Cleanup(gateway.CloseOpenAIWSPool)
 	cache := &concurrencyCacheMock{
 		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
 		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
 	}
 	h := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(cache), billing, &service.APIKeyService{}, nil, nil, nil, nil, cfg)
-	groupID := int64(4202)
 	apiKey := &service.APIKey{
 		ID: 1802, GroupID: &groupID, User: &service.User{ID: 1702, Status: service.StatusActive},
 		Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive},
@@ -271,9 +285,9 @@ func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string)
 	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.CloseNow() })
-	return conn, repo, func() ([]int64, []string) {
+	return conn, repo, func() ([]int64, []string, []string) {
 		mu.Lock()
 		defer mu.Unlock()
-		return append([]int64(nil), accountIDs...), append([]string(nil), turns...)
+		return append([]int64(nil), accountIDs...), append([]string(nil), turns...), append([]string(nil), models...)
 	}
 }

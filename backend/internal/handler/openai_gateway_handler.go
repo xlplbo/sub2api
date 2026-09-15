@@ -3047,6 +3047,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				wsAttemptMessage = nextAttemptMessage
 				if retryCurrentTurn {
+					if model := strings.TrimSpace(gjson.GetBytes(wsAttemptMessage, "model").String()); model != "" {
+						reqModel = model
+						channelMappingWS, _ = h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
+						wsForwardModel = openAIChannelForwardModel(channelMappingWS, reqModel)
+						hooks.InitialRequestModel = reqModel
+					}
 					// 成功完成一轮后，下一轮恢复独立预算；在换号循环中清理，避免回调并发修改 map。
 					if wsTurnSucceededSinceFailover.Swap(false) {
 						switchCount = 0
