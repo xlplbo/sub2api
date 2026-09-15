@@ -2540,6 +2540,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
+	var wsTurnSucceededSinceFailover atomic.Bool
 	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
 		if account == nil || failoverErr == nil || failoverErr.StatusCode != http.StatusTooManyRequests || failoverErr.SameAccountRetryDeadline.IsZero() {
 			return false
@@ -2896,6 +2897,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return nil
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
+				if account.IsOpenAI() && turnErr == nil && result != nil && result.SucceededForScheduling() {
+					wsTurnSucceededSinceFailover.Store(true)
+				}
 				turnStart := getTurnStart(turn)
 				cyberBlockBody := takeCyberTurnBody(turn)
 				// 每次 attempt 都清 cyber mark；failover 链结束前保留 recorded guard，
@@ -3043,6 +3047,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				wsAttemptMessage = nextAttemptMessage
 				if retryCurrentTurn {
+					// 成功完成一轮后，下一轮恢复独立预算；在换号循环中清理，避免回调并发修改 map。
+					if wsTurnSucceededSinceFailover.Swap(false) {
+						switchCount = 0
+						profitVetoCount = 0
+						clear(failedAccountIDs)
+						clear(sameAccountRetryCount)
+						lastFailoverErr = nil
+						oauth429FailoverState = service.OpenAIOAuth429FailoverState{}
+					}
 					previousResponseID = ""
 					reqLog.Warn("openai.websocket_current_turn_failover_retry",
 						zap.Int64("account_id", account.ID),
