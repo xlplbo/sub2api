@@ -93,6 +93,8 @@ func TestOpenAIWSAccountWaitBudget_Boundaries(t *testing.T) {
 	require.Equal(t, first, b.waitDeadline(time.Minute, time.Time{}), "retry must not reset the wait budget")
 	retryDeadline := time.Now().Add(50 * time.Millisecond)
 	require.Equal(t, retryDeadline, b.waitDeadline(time.Minute, retryDeadline))
+	require.Equal(t, first, b.deadline, "same-account retry must not shorten the turn's account wait budget")
+	require.Equal(t, first, b.waitDeadline(time.Minute, time.Time{}), "failover must retain the account wait budget")
 	b.requestSent.Store(true)
 	require.False(t, b.canWait(service.OpenAIWSIngressModePassthrough), "sent request cannot become a fresh passthrough request")
 	b.nextTurn()
@@ -145,19 +147,33 @@ func TestOpenAIWSAccountWait_NoPlanAndAcquireCancellation(t *testing.T) {
 	}
 }
 
-func TestOpenAIWSAccountWait_ExpiredBudgetDoesNotReacquire(t *testing.T) {
-	for _, source := range []string{"account_wait", "upstream_retry"} {
-		t.Run(source, func(t *testing.T) {
+func TestOpenAIWSAccountWait_DeadlineAdmissionBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		waitExpired      bool
+		retryExpired     bool
+		slotAvailable    bool
+		wantAcquired     bool
+		wantAcquireCalls int
+	}{
+		{name: "account_wait", waitExpired: true, slotAvailable: true},
+		{name: "both", waitExpired: true, retryExpired: true, slotAvailable: true},
+		{name: "retry_expired_free_slot", retryExpired: true, slotAvailable: true, wantAcquired: true, wantAcquireCalls: 1},
+		{name: "retry_expired_busy_slot", retryExpired: true, wantAcquireCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attempts := 0
 			cache := &concurrencyCacheMock{acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
-				t.Error("expired recovery must not reacquire a slot")
-				return true, nil
+				attempts++
+				return tc.slotAvailable, nil
 			}}
 			h := &OpenAIGatewayHandler{concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, 0)}
 			budget := &openAIWSAccountWaitBudget{turn: 1}
 			var retryDeadline time.Time
-			if source == "account_wait" {
+			if tc.waitExpired {
 				budget.deadline = time.Now().Add(-time.Second)
-			} else {
+			}
+			if tc.retryExpired {
 				retryDeadline = time.Now().Add(-time.Second)
 			}
 			release, err := h.acquireWSAccountSlot(context.Background(), &service.Account{ID: 801, Platform: service.PlatformOpenAI}, 1,
@@ -165,10 +181,61 @@ func TestOpenAIWSAccountWait_ExpiredBudgetDoesNotReacquire(t *testing.T) {
 			if release != nil {
 				release()
 			}
+			require.Equal(t, tc.wantAcquireCalls, attempts)
+			if tc.wantAcquired {
+				require.NoError(t, err)
+				require.NotNil(t, release)
+				require.EqualValues(t, 1, cache.releaseAccountCalled)
+				return
+			}
 			require.Nil(t, release)
 			var closeErr *service.OpenAIWSClientCloseError
 			require.ErrorAs(t, err, &closeErr)
 			require.Equal(t, coderws.StatusTryAgainLater, closeErr.StatusCode())
+		})
+	}
+}
+
+func TestOpenAIWSAccountWait_RetryDeadlineDoesNotExpireFailoverBudget(t *testing.T) {
+	for _, acquireWhileWaiting := range []bool{true, false} {
+		t.Run(fmt.Sprintf("acquired=%v", acquireWhileWaiting), func(t *testing.T) {
+			var waitDeadline time.Time
+			cache := &concurrencyCacheMock{acquireAccountSlotFn: func(ctx context.Context, accountID int64, _ int, _ string) (bool, error) {
+				if accountID == 802 {
+					return true, nil
+				}
+				if deadline, ok := ctx.Deadline(); ok {
+					waitDeadline = deadline
+					return acquireWhileWaiting, nil
+				}
+				return false, nil
+			}}
+			h := &OpenAIGatewayHandler{concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, 0)}
+			budget := &openAIWSAccountWaitBudget{turn: 1}
+			plan := &service.AccountWaitPlan{Timeout: time.Minute, MaxWaiting: 2}
+			retryDeadline := time.Now().Add(250 * time.Millisecond)
+			release, err := h.acquireWSAccountSlot(context.Background(), &service.Account{ID: 801, Platform: service.PlatformOpenAI}, 1,
+				plan, budget, service.OpenAIWSIngressModeCtxPool, "retry", retryDeadline, zap.NewNop())
+			if release != nil {
+				release()
+			}
+			if acquireWhileWaiting {
+				require.NoError(t, err)
+				require.NotNil(t, release)
+			} else {
+				require.Nil(t, release)
+				var closeErr *service.OpenAIWSClientCloseError
+				require.ErrorAs(t, err, &closeErr)
+				require.Equal(t, coderws.StatusTryAgainLater, closeErr.StatusCode())
+			}
+			require.Equal(t, retryDeadline, waitDeadline, "same-account retry deadline must still cap queue waiting")
+			<-time.After(time.Until(retryDeadline))
+			require.False(t, budget.expired(), "retry window expiry must not exhaust the turn's admission budget")
+			release, err = h.acquireWSAccountSlot(context.Background(), &service.Account{ID: 802, Platform: service.PlatformOpenAI}, 1,
+				plan, budget, service.OpenAIWSIngressModeCtxPool, "initial", time.Time{}, zap.NewNop())
+			require.NoError(t, err)
+			require.NotNil(t, release)
+			release()
 		})
 	}
 }

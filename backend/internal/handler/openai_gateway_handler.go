@@ -2645,7 +2645,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if waitBudget.expired(time.Time{}) {
+		if waitBudget.expired() {
 			closeAdmission(openAIWSAccountBusyError())
 			return
 		}

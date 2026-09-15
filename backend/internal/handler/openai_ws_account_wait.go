@@ -37,14 +37,13 @@ func (b *openAIWSAccountWaitBudget) waitDeadline(timeout time.Duration, retryDea
 		b.deadline = deadline
 	}
 	if !retryDeadline.IsZero() && retryDeadline.Before(b.deadline) {
-		b.deadline = retryDeadline
+		return retryDeadline
 	}
 	return b.deadline
 }
 
-func (b *openAIWSAccountWaitBudget) expired(retryDeadline time.Time) bool {
-	now := time.Now()
-	return (!b.deadline.IsZero() && !now.Before(b.deadline)) || (!retryDeadline.IsZero() && !now.Before(retryDeadline))
+func (b *openAIWSAccountWaitBudget) expired() bool {
+	return !b.deadline.IsZero() && !time.Now().Before(b.deadline)
 }
 
 func openAIWSAccountBusyError() error {
@@ -68,7 +67,7 @@ func (h *OpenAIGatewayHandler) acquireWSAccountSlot(ctx context.Context, account
 	if ctx.Err() != nil {
 		return nil, context.Cause(ctx)
 	}
-	if budget.expired(retryDeadline) {
+	if budget.expired() {
 		return nil, openAIWSAccountBusyError()
 	}
 	release, acquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, maxConcurrency)
