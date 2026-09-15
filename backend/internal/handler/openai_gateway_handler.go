@@ -2534,6 +2534,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, reqModel)
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	firstOutputTimeoutSwitchCount := 0
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
@@ -2576,6 +2577,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 		releaseAccountSlot()
 		if !failoverErr.ShouldRetryNextAccount() {
+			closeOpenAIWSFailoverExhausted(c, wsConn, failoverErr)
+			return false
+		}
+		if account.IsOpenAI() && openAIFirstOutputFailoverExhausted(failoverErr, &firstOutputTimeoutSwitchCount) {
 			closeOpenAIWSFailoverExhausted(c, wsConn, failoverErr)
 			return false
 		}
@@ -3059,6 +3064,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					// 成功完成一轮后，下一轮恢复独立预算；在换号循环中清理，避免回调并发修改 map。
 					if wsTurnSucceededSinceFailover.Swap(false) {
 						switchCount = 0
+						firstOutputTimeoutSwitchCount = 0
 						profitVetoCount = 0
 						clear(failedAccountIDs)
 						clear(sameAccountRetryCount)

@@ -151,7 +151,7 @@ func (r *openAIWSTurnBudgetAccountRepo) SetTempUnschedulable(_ context.Context, 
 	return nil
 }
 
-func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string, channelMapping map[string]string) (*coderws.Conn, *openAIWSTurnBudgetAccountRepo, func() ([]int64, []string, []string)) {
+func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string, channelMapping map[string]string, configure ...func(*config.Config)) (*coderws.Conn, *openAIWSTurnBudgetAccountRepo, func() ([]int64, []string, []string)) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	var mu sync.Mutex
@@ -211,7 +211,10 @@ func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string,
 			if err != nil {
 				return
 			}
-			_, response := responseFor(accountID, payload)
+			eventType, response := responseFor(accountID, payload)
+			if eventType == "timeout" {
+				continue
+			}
 			if err := conn.Write(r.Context(), coderws.MessageText, response); err != nil {
 				return
 			}
@@ -243,6 +246,9 @@ func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string,
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
 	cfg.Gateway.MaxAccountSwitches = 1
+	for _, apply := range configure {
+		apply(cfg)
+	}
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
 	usage := &openAIWSUsageHandlerUsageLogRepoStub{}
