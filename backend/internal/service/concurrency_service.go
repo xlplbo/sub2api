@@ -316,7 +316,8 @@ func (s *ConcurrencyService) SetAccountLoadBatchCacheTTL(ttl time.Duration) {
 type AcquireResult struct {
 	Acquired    bool
 	ReleaseFunc func() // Must be called when done (typically via defer)
-	// RefreshFunc 为仍持有的槽续租；返回 false 表示失租。只有账号槽且 Acquired 为真时非 nil。
+	// RefreshFunc 为仍持有的槽续租；返回 false 表示失租。只有账号槽且 Acquired 为真时才可能非 nil：
+	// 不限并发的账号（maxConcurrency <= 0）没有真实槽位，Acquired 为真但 RefreshFunc 仍为 nil。
 	RefreshFunc func(ctx context.Context) (bool, error)
 }
 

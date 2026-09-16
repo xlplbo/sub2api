@@ -603,7 +603,9 @@ type AccountSelectionResult struct {
 	Account     *Account
 	Acquired    bool
 	ReleaseFunc func()
-	// RefreshFunc 与 ReleaseFunc 同源，为已抢到的账号槽续租；未抢槽或无限制账号时为 nil。
+	// RefreshFunc 与 ReleaseFunc 同源，为已抢到的账号槽续租；未抢槽时为 nil。
+	// 不限并发的账号（Concurrency <= 0）与未接并发服务（concurrencyService 为 nil）时
+	// 没有真实槽位，Acquired 为真但 RefreshFunc 仍为 nil。
 	RefreshFunc func(ctx context.Context) (bool, error)
 	WaitPlan    *AccountWaitPlan // nil means no wait allowed
 	// stickySessionHit 标记账号来自会话粘性绑定命中，供非高级调度路径回填决策标签。

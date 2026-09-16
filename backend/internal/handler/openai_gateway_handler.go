@@ -3020,7 +3020,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				releaseUserSlot()
 				switch {
 				case turnErr != nil:
-					// 同账号重试的转发器轮号从 1 重新计数，不走取回；挂起的定时器会在重试途中到期释放。
+					// 同账号重试的转发器轮号从 1 重新计数，不走取回；这里连挂起槽一起立即释放。
 					releaseAccountSlot()
 				case turnSlotHold <= 0, currentAccountRelease == nil, currentAccountRefresh == nil:
 					releaseAccountSlot()
