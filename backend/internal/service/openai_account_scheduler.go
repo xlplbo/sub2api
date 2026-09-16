@@ -92,6 +92,7 @@ type OpenAIAccountScheduleRequest struct {
 	// and compact_model_mapping; native remote compaction v2 leaves it false.
 	RequireCompact bool
 	// ContinuationEligible 为假时粘性与 previous_response 快抢在有续聊等待者时让出，计划标新会话类。
+	// 直接构造请求时必须显式置位，零值按不合格处理。
 	ContinuationEligible bool
 	// StickyFullWaits 为真时粘性账号满槽不逃逸，见 selectBySessionHash。
 	StickyFullWaits bool
@@ -2372,6 +2373,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 				SessionHash:             sessionHash,
 				StickyAccountID:         guardianParentAccountID,
 				PreserveStickyBinding:   true,
+				ContinuationEligible:    true,
 				RequestedModel:          requestedModel,
 				RequiredTransport:       requiredTransport,
 				RequiredCapability:      requiredCapability,
