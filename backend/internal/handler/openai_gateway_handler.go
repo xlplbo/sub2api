@@ -2563,7 +2563,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
 		)
 	}
-	ctx = service.WithOpenAIAdmissionOptions(ctx, service.OpenAIAdmissionOptions{ContinuationEligible: continuationEligible})
+	ctx = service.WithOpenAIAdmissionOptions(ctx, service.OpenAIAdmissionOptions{ContinuationEligible: continuationEligible, StickyFullWaits: true})
 	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, reqModel)
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0

@@ -3998,3 +3998,68 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SubscriptionPriorityWai
 	require.Equal(t, int64(38011), selection.WaitPlan.AccountID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }
+
+func newStickyFullWaitsService(t *testing.T, accounts []Account, cfg *config.Config, cache *schedulerTestGatewayCache, concurrency schedulerTestConcurrencyCache) *OpenAIGatewayService {
+	t.Helper()
+	cfg.Gateway.OpenAIScheduler.StickyEscapeEnabled = true
+	return &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:              cache,
+		cfg:                cfg,
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(concurrency),
+	}
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyFullWaitsReturnsPlanInsteadOfEscape(t *testing.T) {
+	groupID, accounts, cfg := newStickyBusySchedulerFixture(t)
+	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_full_waits": 21001}}
+	var acquired []int64
+	svc := newStickyFullWaitsService(t, accounts, cfg, cache, schedulerTestConcurrencyCache{
+		acquireResults: map[int64]bool{21001: false, 21002: true},
+		acquiredIDs:    &acquired,
+	})
+	ctx := WithOpenAIAdmissionOptions(context.Background(), OpenAIAdmissionOptions{ContinuationEligible: true, StickyFullWaits: true})
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_full_waits", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.False(t, selection.Acquired)
+	require.NotNil(t, selection.WaitPlan)
+	require.Equal(t, int64(21001), selection.WaitPlan.AccountID, "WS 续聊满槽不逃逸，排在原账号")
+	require.Equal(t, AccountWaitClassContinuation, selection.WaitPlan.Class)
+	require.True(t, decision.StickySessionHit)
+	require.NotContains(t, acquired, int64(21002))
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyFullWaitsSpillsWhenContinuationQueueFull(t *testing.T) {
+	groupID, accounts, cfg := newStickyBusySchedulerFixture(t)
+	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_queue_full": 21001}}
+	svc := newStickyFullWaitsService(t, accounts, cfg, cache, schedulerTestConcurrencyCache{
+		acquireResults: map[int64]bool{21001: false, 21002: true},
+		contWaitCounts: map[int64]int{21001: 2},
+	})
+	ctx := WithOpenAIAdmissionOptions(context.Background(), OpenAIAdmissionOptions{ContinuationEligible: true, StickyFullWaits: true})
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_queue_full", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.True(t, selection.Acquired)
+	require.Equal(t, int64(21002), selection.Account.ID, "续聊队列满时溢出到负载层")
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.False(t, decision.StickySessionHit)
+	require.Equal(t, int64(21001), cache.sessionBindings["openai:session_hash_queue_full"], "溢出不改写绑定")
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_HTTPDefaultStillEscapesOnFull(t *testing.T) {
+	groupID, accounts, cfg := newStickyBusySchedulerFixture(t)
+	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_http_escape": 21001}}
+	svc := newStickyFullWaitsService(t, accounts, cfg, cache, schedulerTestConcurrencyCache{
+		acquireResults: map[int64]bool{21001: false, 21002: true},
+	})
+	selection, decision, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "session_hash_http_escape", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.True(t, selection.Acquired)
+	require.Equal(t, int64(21002), selection.Account.ID, "不带标志的 HTTP 请求沿用上游满槽逃逸")
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.Equal(t, int64(21001), cache.sessionBindings["openai:session_hash_http_escape"])
+}
