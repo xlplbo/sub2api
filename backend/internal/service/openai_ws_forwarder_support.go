@@ -477,8 +477,13 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 		return nil, nil
 	}
 
-	result, acquireErr := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
-	if acquireErr == nil && result.Acquired {
+	continuationEligible := openAIAdmissionOptionsFromContext(ctx).ContinuationEligible
+	var result *AcquireResult
+	var acquireErr error
+	if continuationEligible || !s.hasContinuationWaiters(ctx, accountID) {
+		result, acquireErr = s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+	}
+	if acquireErr == nil && result != nil && result.Acquired {
 		logOpenAIWSBindResponseAccountWarn(
 			derefGroupID(groupID),
 			accountID,
@@ -496,13 +501,8 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 	cfg := s.schedulingConfig()
 	if s.concurrencyService != nil {
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account: account,
-			WaitPlan: &AccountWaitPlan{
-				AccountID:      accountID,
-				MaxConcurrency: account.Concurrency,
-				Timeout:        cfg.StickySessionWaitTimeout,
-				MaxWaiting:     cfg.StickySessionMaxWaiting,
-			},
+			Account:  account,
+			WaitPlan: stickyWaitPlanFor(cfg, account, continuationEligible),
 		}), nil
 	}
 	return nil, nil

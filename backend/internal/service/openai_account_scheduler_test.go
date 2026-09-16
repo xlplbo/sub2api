@@ -220,6 +220,10 @@ func newSchedulerTestOpenAIWSV2Config() *config.Config {
 	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
 	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
 	cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds = 3600
+	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 120 * time.Second
+	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 3
+	cfg.Gateway.Scheduling.FallbackWaitTimeout = 30 * time.Second
+	cfg.Gateway.Scheduling.FallbackMaxWaiting = 100
 	return cfg
 }
 
@@ -2194,8 +2198,8 @@ func TestOpenAIGatewayService_RecheckSelectedOpenAIAccountFromDB_SimpleModeUsesF
 	require.NotNil(t, standardSvc.recheckSelectedOpenAIAccountFromDB(context.Background(), &ungrouped, nil, PlatformOpenAI, "gpt-5.1", false, ""))
 }
 
-func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseSticky(t *testing.T) {
-	ctx := context.Background()
+func newPreviousResponseSchedulerFixture(t *testing.T) (int64, Account, *config.Config) {
+	t.Helper()
 	groupID := int64(9)
 	account := Account{
 		ID:          1001,
@@ -2208,7 +2212,6 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseSticky(
 			"openai_apikey_responses_websockets_v2_enabled": true,
 		},
 	}
-	cache := &schedulerTestGatewayCache{}
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIWS.Enabled = true
 	cfg.Gateway.OpenAIWS.OAuthEnabled = true
@@ -2216,6 +2219,17 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseSticky(
 	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
 	cfg.Gateway.OpenAIWS.StickySessionTTLSeconds = 1800
 	cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds = 3600
+	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 120 * time.Second
+	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 3
+	cfg.Gateway.Scheduling.FallbackWaitTimeout = 30 * time.Second
+	cfg.Gateway.Scheduling.FallbackMaxWaiting = 100
+	return groupID, account, cfg
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseSticky(t *testing.T) {
+	ctx := context.Background()
+	groupID, account, cfg := newPreviousResponseSchedulerFixture(t)
+	cache := &schedulerTestGatewayCache{}
 
 	svc := &OpenAIGatewayService{
 		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
@@ -2248,6 +2262,53 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseSticky(
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponsePlanIsContinuationClass(t *testing.T) {
+	ctx := context.Background()
+	groupID, account, cfg := newPreviousResponseSchedulerFixture(t)
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                cfg,
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{acquireResults: map[int64]bool{1001: false}}),
+	}
+	require.NoError(t, svc.getOpenAIWSStateStore().BindResponseAccount(ctx, groupID, "resp_prev_class", account.ID, time.Hour))
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "resp_prev_class", "session_hash_prev_class", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.False(t, selection.Acquired)
+	require.NotNil(t, selection.WaitPlan)
+	require.Equal(t, AccountWaitClassContinuation, selection.WaitPlan.Class)
+	require.True(t, decision.StickyPreviousHit)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseIneligibleYields(t *testing.T) {
+	groupID, account, cfg := newPreviousResponseSchedulerFixture(t)
+	var acquired []int64
+	svc := &OpenAIGatewayService{
+		accountRepo:      schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
+		cache:            &schedulerTestGatewayCache{},
+		cfg:              cfg,
+		rateLimitService: newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{
+			acquireResults: map[int64]bool{1001: true},
+			contWaitCounts: map[int64]int{1001: 1},
+			acquiredIDs:    &acquired,
+		}),
+	}
+	ctx := WithOpenAIAdmissionOptions(context.Background(), OpenAIAdmissionOptions{ContinuationEligible: false})
+	require.NoError(t, svc.getOpenAIWSStateStore().BindResponseAccount(ctx, groupID, "resp_prev_yield", account.ID, time.Hour))
+	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "resp_prev_yield", "session_hash_prev_yield", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotContains(t, acquired, int64(1001))
+	require.False(t, selection.Acquired)
+	require.NotNil(t, selection.WaitPlan)
+	require.Equal(t, AccountWaitClassNewSession, selection.WaitPlan.Class)
+	require.Equal(t, cfg.Gateway.Scheduling.FallbackWaitTimeout, selection.WaitPlan.Timeout)
+	require.Equal(t, cfg.Gateway.Scheduling.FallbackMaxWaiting, selection.WaitPlan.MaxWaiting)
 }
 
 func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionSticky(t *testing.T) {
