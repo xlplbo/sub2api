@@ -2567,6 +2567,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, reqModel)
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	admissionAfterFailover := false
 	firstOutputTimeoutSwitchCount := 0
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
@@ -2771,8 +2772,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 		currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
 		currentAccountRefresh = accountRefreshFunc
-		if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, apiKey.GroupID, sessionHash, account.ID); err != nil {
-			reqLog.Warn("openai.websocket_bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+		bindPolicy := service.StickyBindPolicyPreserve
+		if admissionAfterFailover {
+			bindPolicy = service.StickyBindPolicyMigrate
+		}
+		admissionAfterFailover = false
+		if err := h.gatewayService.BindStickySessionAfterAdmissionWithPolicy(ctx, apiKey.GroupID, sessionHash, account.ID, bindPolicy); err != nil {
+			reqLog.Warn("openai.websocket_bind_sticky_session_after_admission_failed", zap.Int64("account_id", account.ID), zap.String("policy", fmt.Sprint(bindPolicy)), zap.Error(err))
 		}
 
 		token, _, err := h.gatewayService.GetRequestCredential(ctx, c, account)
@@ -2784,6 +2790,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if handleWSFailover(account, failoverErr) {
+					admissionAfterFailover = true
 					continue
 				}
 				return
@@ -3214,6 +3221,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					continue
 				}
 				if handleWSFailover(account, failoverErr) {
+					admissionAfterFailover = true
 					break
 				}
 				return
