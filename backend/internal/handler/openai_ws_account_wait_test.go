@@ -304,6 +304,11 @@ func TestOpenAIWSAccountWait_LeaseLossReleasesResources(t *testing.T) {
 
 func newOpenAIWSAccountWaitSession(t *testing.T, mode string, timeout time.Duration) *openAIWSAccountWaitSession {
 	t.Helper()
+	return newOpenAIWSAccountWaitSessionWithHold(t, mode, timeout, 0)
+}
+
+func newOpenAIWSAccountWaitSessionWithHold(t *testing.T, mode string, timeout time.Duration, holdSeconds int) *openAIWSAccountWaitSession {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	f := &openAIWSAccountWaitSession{requests: make(chan []byte, 8), finished: make(chan struct{}), cancel: make(chan context.CancelCauseFunc, 1)}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -352,6 +357,7 @@ func newOpenAIWSAccountWaitSession(t *testing.T, mode string, timeout time.Durat
 	cfg.Gateway.Scheduling.FallbackWaitTimeout = timeout
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 2
 	cfg.Gateway.Scheduling.FallbackMaxWaiting = 2
+	cfg.Gateway.OpenAIWS.TurnSlotHoldSeconds = holdSeconds
 	f.cache = testutil.NewTestConcurrencyCache(t)
 	concurrency := service.NewConcurrencyService(f.cache)
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
@@ -403,6 +409,15 @@ func completeOpenAIWSAccountWaitTurn(t *testing.T, ctx context.Context, f *openA
 	require.NoError(t, err)
 	<-f.requests
 	require.Eventually(t, func() bool { n, _ := f.cache.GetAccountConcurrency(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
+}
+
+func completeOpenAIWSTurnKeepingSlot(t *testing.T, ctx context.Context, f *openAIWSAccountWaitSession, input string) {
+	t.Helper()
+	require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"`+input+`"}`)))
+	_, body, err := f.conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(body, "type").String())
+	<-f.requests
 }
 
 func TestOpenAIWSAccountWait_ReleaseContinuesSameConnection(t *testing.T) {
