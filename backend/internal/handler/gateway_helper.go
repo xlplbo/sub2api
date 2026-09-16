@@ -453,6 +453,14 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 }
 
 func waitForConcurrencySlot(ctx context.Context, acquire func() (*service.AcquireResult, error), ping <-chan time.Time, heartbeat func() error) (func(), error) {
+	result, err := waitForConcurrencySlotResult(ctx, acquire, ping, heartbeat)
+	if err != nil || result == nil {
+		return nil, err
+	}
+	return result.ReleaseFunc, nil
+}
+
+func waitForConcurrencySlotResult(ctx context.Context, acquire func() (*service.AcquireResult, error), ping <-chan time.Time, heartbeat func() error) (*service.AcquireResult, error) {
 	backoff := initialBackoff
 	timer := time.NewTimer(backoff)
 	defer timer.Stop()
@@ -479,7 +487,7 @@ func waitForConcurrencySlot(ctx context.Context, acquire func() (*service.Acquir
 					}
 					return nil, context.Cause(ctx)
 				}
-				return result.ReleaseFunc, nil
+				return result, nil
 			}
 			backoff = nextBackoff(backoff)
 			timer.Reset(backoff)
