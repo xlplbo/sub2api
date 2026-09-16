@@ -575,7 +575,13 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		)
 		return nil, true, nil
 	}
-	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+	// 不合格请求（回退种子哈希）不能借共享绑定插到续聊等待者前面：有续聊在等就视同满槽。
+	yieldToContinuation := !req.ContinuationEligible && s.service.hasContinuationWaiters(ctx, accountID)
+	var result *AcquireResult
+	var acquireErr error
+	if !yieldToContinuation {
+		result, acquireErr = s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+	}
 	if acquireErr != nil && req.DisableStickyEscape {
 		return nil, false, acquireErr
 	}
@@ -590,11 +596,12 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			RefreshFunc: result.RefreshFunc,
 		}), false, nil
 	}
+	stickyFull := yieldToContinuation || (acquireErr == nil && result != nil && !result.Acquired)
 
 	cfg := s.service.schedulingConfig()
 	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
 	if s.service.concurrencyService != nil {
-		if escapeCfg.enabled && !req.DisableStickyEscape && acquireErr == nil && result != nil && !result.Acquired {
+		if escapeCfg.enabled && !req.DisableStickyEscape && stickyFull {
 			errorRate, ttft, _ := s.stats.snapshot(accountID)
 			slog.Info("sticky_escape_triggered",
 				"account_id", accountID,
@@ -605,13 +612,8 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			return nil, true, nil
 		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account: account,
-			WaitPlan: &AccountWaitPlan{
-				AccountID:      accountID,
-				MaxConcurrency: account.Concurrency,
-				Timeout:        cfg.StickySessionWaitTimeout,
-				MaxWaiting:     cfg.StickySessionMaxWaiting,
-			},
+			Account:  account,
+			WaitPlan: stickyWaitPlanFor(cfg, account, req.ContinuationEligible),
 		}), false, nil
 	}
 	return nil, false, nil
@@ -1190,8 +1192,9 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		if candidate.account == nil {
 			continue
 		}
-		if candidate.loadKnown && candidate.account.Concurrency > 0 &&
-			candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency {
+		if candidate.loadKnown && candidate.loadInfo != nil &&
+			((candidate.account.Concurrency > 0 && candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency) ||
+				candidate.loadInfo.ContinuationWaiting > 0) {
 			continue
 		}
 
@@ -1736,6 +1739,7 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 					MaxConcurrency: fresh.Concurrency,
 					Timeout:        cfg.FallbackWaitTimeout,
 					MaxWaiting:     cfg.FallbackMaxWaiting,
+					Class:          AccountWaitClassNewSession,
 				},
 			}), candidateCount, topK, loadSkew, nil
 		}
