@@ -390,10 +390,11 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 		if slotType == "user" {
 			return h.concurrencyService.AcquireUserSlot(ctx, id, maxConcurrency)
 		}
-		if yieldToContinuation && h.HasContinuationWaiters(ctx, id) {
-			return &service.AcquireResult{}, nil
+		class := service.AccountWaitClassLegacy
+		if yieldToContinuation {
+			class = service.AccountWaitClassNewSession
 		}
-		return h.concurrencyService.AcquireAccountSlot(ctx, id, maxConcurrency)
+		return h.TryAcquireAccountSlotForPlan(ctx, id, maxConcurrency, class)
 	}
 
 	if tryImmediate {
