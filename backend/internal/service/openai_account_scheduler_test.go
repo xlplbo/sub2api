@@ -2456,12 +2456,22 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceSkipsAccount
 			},
 		}),
 	}
-	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
-	require.NoError(t, err)
-	require.NotNil(t, selection)
-	require.True(t, selection.Acquired)
-	require.Equal(t, int64(21002), selection.Account.ID, "有续聊等待者的账号对新会话不可见，即使它负载更低、优先级更高")
-	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	// 两账号 score 恒为 0（fixture 未设 SchedulerScoreWeights），选号在等权重时靠时间熵种子
+	// 做 50/50 随机抽签；跳过分支缺失时单次调用约有一半概率仍偶然选中 21002，需多次采样才能
+	// 稳定证明「有续聊等待者的账号对新会话不可见」。
+	for i := 0; i < 30; i++ {
+		selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+		require.NoError(t, err)
+		require.NotNil(t, selection)
+		require.True(t, selection.Acquired)
+		require.Equal(t, int64(21002), selection.Account.ID, "有续聊等待者的账号对新会话不可见，即使它负载更低、优先级更高")
+		if i == 0 {
+			require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+		}
+		if selection.ReleaseFunc != nil {
+			selection.ReleaseFunc()
+		}
+	}
 }
 
 func TestOpenAIGatewayService_SelectAccountWithScheduler_FallbackPlanIsNewSessionClass(t *testing.T) {
