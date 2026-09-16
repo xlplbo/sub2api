@@ -4068,3 +4068,57 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_HTTPDefaultStillEscapes
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.Equal(t, int64(21001), cache.sessionBindings["openai:session_hash_http_escape"])
 }
+
+func TestTryFallbackToWeightedSticky_WaitPlanFollowsRequestEligibility(t *testing.T) {
+	groupID := int64(10110)
+	accounts := []Account{
+		{
+			ID:          21101,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			GroupIDs:    []int64{groupID},
+		},
+	}
+	cfg := newSchedulerTestOpenAIWSV2Config()
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerGroupAwareOpenAIAccountRepo{schedulerTestOpenAIAccountRepo{accounts: accounts}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{acquireResults: map[int64]bool{21101: false}}),
+	}
+	scheduler := &defaultOpenAIAccountScheduler{service: svc, stats: newOpenAIAccountRuntimeStats()}
+
+	for _, tc := range []struct {
+		name           string
+		eligible       bool
+		wantClass      AccountWaitClass
+		wantTimeout    time.Duration
+		wantMaxWaiting int
+	}{
+		{"continuation", true, AccountWaitClassContinuation, cfg.Gateway.Scheduling.StickySessionWaitTimeout, cfg.Gateway.Scheduling.StickySessionMaxWaiting},
+		{"new session", false, AccountWaitClassNewSession, cfg.Gateway.Scheduling.FallbackWaitTimeout, cfg.Gateway.Scheduling.FallbackMaxWaiting},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			selection, err := scheduler.tryFallbackToWeightedSticky(context.Background(), OpenAIAccountScheduleRequest{
+				GroupID:              &groupID,
+				Platform:             PlatformOpenAI,
+				StickyAccountID:      21101,
+				StickyWeighted:       true,
+				RequestedModel:       "gpt-5.1",
+				RequiredTransport:    OpenAIUpstreamTransportAny,
+				RequiredCapability:   OpenAIEndpointCapabilityChatCompletions,
+				ContinuationEligible: tc.eligible,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.NotNil(t, selection.WaitPlan)
+			require.Equal(t, int64(21101), selection.WaitPlan.AccountID)
+			require.Equal(t, tc.wantClass, selection.WaitPlan.Class, "回退计划的类别必须跟随请求的续聊资格")
+			require.Equal(t, tc.wantTimeout, selection.WaitPlan.Timeout)
+			require.Equal(t, tc.wantMaxWaiting, selection.WaitPlan.MaxWaiting)
+		})
+	}
+}

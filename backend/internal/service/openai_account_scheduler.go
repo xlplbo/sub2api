@@ -1292,6 +1292,8 @@ func (s *defaultOpenAIAccountScheduler) consumeOpenAISelectionDBRecheck(budget *
 	return budget.recordRecheck()
 }
 
+// tryFallbackToWeightedSticky 是 sticky-weighted 子模式的回退：它不经过 selectBySessionHash，
+// 本轮不应用 StickyFullWaits（满槽仍按负载层逃逸），只按请求的续聊资格给等待计划。
 func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
@@ -1362,15 +1364,9 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			}), nil
 		}
 		if s.service.concurrencyService != nil {
-			cfg := s.service.schedulingConfig()
 			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account: account,
-				WaitPlan: &AccountWaitPlan{
-					AccountID:      account.ID,
-					MaxConcurrency: account.Concurrency,
-					Timeout:        cfg.StickySessionWaitTimeout,
-					MaxWaiting:     cfg.StickySessionMaxWaiting,
-				},
+				Account:  account,
+				WaitPlan: stickyWaitPlanFor(s.service.schedulingConfig(), account, req.ContinuationEligible),
 			}), nil
 		}
 	}
