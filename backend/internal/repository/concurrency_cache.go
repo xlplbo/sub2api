@@ -1345,6 +1345,11 @@ func (c *concurrencyCache) cleanupStaleProcessSlotsForIndex(
 		if err := c.rdb.Del(ctx, spec.waitKey(id)).Err(); err != nil {
 			return fmt.Errorf("delete stale wait key %s: %w", spec.waitKey(id), err)
 		}
+		if spec.extraWaitKey != nil {
+			if err := c.rdb.Del(ctx, spec.extraWaitKey(id)).Err(); err != nil {
+				return fmt.Errorf("delete stale wait key %s: %w", spec.extraWaitKey(id), err)
+			}
+		}
 		if remaining > 0 {
 			refreshed = append(refreshed, redis.Z{
 				Score:  float64(now + int64(c.slotTTLSeconds)),

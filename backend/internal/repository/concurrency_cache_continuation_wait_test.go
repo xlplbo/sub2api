@@ -124,3 +124,32 @@ func TestRefreshAccountSlotFailsAfterTTLExpiry(t *testing.T) {
 	require.False(t, refreshed, "跨过槽 TTL 后成员已被清理，续租返回失租")
 	require.Equal(t, int64(0), client.ZCard(ctx, accountSlotKey(12)).Val())
 }
+
+func TestCleanupStaleProcessSlotsDeletesContinuationWaitKey(t *testing.T) {
+	cache, client := newContinuationWaitTestCache(t)
+	ctx := context.Background()
+
+	// 预置迁移 marker，确保等待计数删除来自索引驱动路径而非一次性清扫。
+	require.NoError(t, client.Set(ctx, legacyWaitSweepMarkerKey, "1", 0).Err())
+
+	ok, err := cache.IncrementAccountContinuationWaitCount(ctx, 14, 3)
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, err = client.ZScore(ctx, accountActiveIndexKey, "14").Result()
+	require.NoError(t, err, "只有续聊等待者的账号在清理前必须留在活跃索引")
+
+	require.NoError(t, cache.CleanupStaleProcessSlots(ctx, "keep-"))
+
+	_, err = client.Get(ctx, accountContinuationWaitKey(14)).Result()
+	require.ErrorIs(t, err, redis.Nil, "启动清理必须删除续聊等待键，否则会幽灵积压到 TTL 自然过期")
+	cont, err := cache.GetAccountContinuationWaitingCount(ctx, 14)
+	require.NoError(t, err)
+	require.Equal(t, 0, cont)
+	_, err = client.ZScore(ctx, accountActiveIndexKey, "14").Result()
+	require.ErrorIs(t, err, redis.Nil, "续聊等待键清空后无槽位的账号应从活跃索引移除")
+
+	// 同一场景下旧键既有行为不变：本就没有旧键等待，清理后仍是 0。
+	legacy, err := cache.GetAccountWaitingCount(ctx, 14)
+	require.NoError(t, err)
+	require.Equal(t, 0, legacy)
+}
