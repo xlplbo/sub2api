@@ -1313,6 +1313,8 @@ type GatewayOpenAIWSConfig struct {
 	LBTopK int `mapstructure:"lb_top_k"`
 	// StickySessionTTLSeconds: session_hash -> account_id 粘连 TTL
 	StickySessionTTLSeconds int `mapstructure:"sticky_session_ttl_seconds"`
+	// TurnSlotHoldSeconds: WS 轮结束后账号槽保留秒数，下一轮在保留期内直接取回并续租；0 关闭
+	TurnSlotHoldSeconds int `mapstructure:"turn_slot_hold_seconds"`
 	// SessionHashReadOldFallback: 会话哈希迁移期是否允许“新 key 未命中时回退读旧 SHA-256 key”
 	SessionHashReadOldFallback bool `mapstructure:"session_hash_read_old_fallback"`
 	// SessionHashDualWriteOld: 会话哈希迁移期是否双写旧 SHA-256 key（短 TTL）
@@ -2425,6 +2427,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.payload_log_sample_rate", 0.2)
 	viper.SetDefault("gateway.openai_ws.lb_top_k", 7)
 	viper.SetDefault("gateway.openai_ws.sticky_session_ttl_seconds", 3600)
+	viper.SetDefault("gateway.openai_ws.turn_slot_hold_seconds", 10)
 	viper.SetDefault("gateway.openai_ws.session_hash_read_old_fallback", true)
 	viper.SetDefault("gateway.openai_ws.session_hash_dual_write_old", true)
 	viper.SetDefault("gateway.openai_ws.metadata_bridge_enabled", true)
@@ -3501,6 +3504,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIWS.StickySessionTTLSeconds <= 0 {
 		return fmt.Errorf("gateway.openai_ws.sticky_session_ttl_seconds must be positive")
+	}
+	if c.Gateway.OpenAIWS.TurnSlotHoldSeconds < 0 {
+		return fmt.Errorf("gateway.openai_ws.turn_slot_hold_seconds must be non-negative")
 	}
 	if c.Gateway.OpenAIWS.StickyResponseIDTTLSeconds <= 0 {
 		return fmt.Errorf("gateway.openai_ws.sticky_response_id_ttl_seconds must be positive")

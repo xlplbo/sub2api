@@ -398,6 +398,8 @@ gateway:
     # 调度与粘连参数
     lb_top_k: 7
     sticky_session_ttl_seconds: 3600
+    # WS 轮结束后账号槽保留秒数：续聊下一轮在保留期内直接取回并续租，不再重抢；0 关闭
+    turn_slot_hold_seconds: 10
     # 会话哈希迁移兼容开关：新 key 未命中时回退读取旧 SHA-256 key
     session_hash_read_old_fallback: true
     # 会话哈希迁移兼容开关：写入时双写旧 SHA-256 key（短 TTL）

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/tidwall/gjson"
 )
@@ -57,4 +58,12 @@ func openAIAdmissionOptionsFromContext(ctx context.Context) OpenAIAdmissionOptio
 func (s *OpenAIGatewayService) OpenAIWSAccountWaitPlan(account *Account) *AccountWaitPlan {
 	cfg := s.schedulingConfig()
 	return &AccountWaitPlan{AccountID: account.ID, MaxConcurrency: account.Concurrency, Timeout: cfg.StickySessionWaitTimeout, MaxWaiting: cfg.StickySessionMaxWaiting, Class: AccountWaitClassContinuation}
+}
+
+// OpenAIWSTurnSlotHold 返回轮间账号槽保留时长；0 表示关闭。
+func (s *OpenAIGatewayService) OpenAIWSTurnSlotHold() time.Duration {
+	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIWS.TurnSlotHoldSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(s.cfg.Gateway.OpenAIWS.TurnSlotHoldSeconds) * time.Second
 }

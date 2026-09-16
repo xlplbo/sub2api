@@ -62,3 +62,12 @@ func TestAccountWaitClassString(t *testing.T) {
 	require.Equal(t, "new_session", AccountWaitClassNewSession.String())
 	require.Equal(t, "continuation", AccountWaitClassContinuation.String())
 }
+
+func TestOpenAIWSTurnSlotHold(t *testing.T) {
+	require.Equal(t, time.Duration(0), (&OpenAIGatewayService{}).OpenAIWSTurnSlotHold())
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.TurnSlotHoldSeconds = 10
+	require.Equal(t, 10*time.Second, (&OpenAIGatewayService{cfg: cfg}).OpenAIWSTurnSlotHold())
+	cfg.Gateway.OpenAIWS.TurnSlotHoldSeconds = 0
+	require.Equal(t, time.Duration(0), (&OpenAIGatewayService{cfg: cfg}).OpenAIWSTurnSlotHold())
+}
