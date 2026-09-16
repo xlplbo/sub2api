@@ -610,7 +610,8 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		// WS 续聊：满槽不逃逸，排在原账号保缓存；对应队列满则保留绑定溢出到负载层，
 		// 与非高级路径的 stickySpillover 一致，避免 handler 入队失败直接 1013。
 		// 队列与计划都按资格取：合格看续聊队列（3 人 / 120 秒），不合格看旧键队列（100 人 / 30 秒）。
-		if !s.service.stickyWaitQueueHasRoom(ctx, accountID, req.ContinuationEligible) {
+		// 任务属主锁定（DisableStickyEscape）不得溢出到别的账号，队列满也照常排在原账号。
+		if !s.service.stickyWaitQueueHasRoom(ctx, accountID, req.ContinuationEligible) && !req.DisableStickyEscape {
 			slog.Info("sticky_full_wait_queue_full",
 				"account_id", accountID,
 				"continuation_eligible", req.ContinuationEligible,

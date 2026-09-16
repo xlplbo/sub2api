@@ -4069,6 +4069,64 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_HTTPDefaultStillEscapes
 	require.Equal(t, int64(21001), cache.sessionBindings["openai:session_hash_http_escape"])
 }
 
+func TestSelectBySessionHash_StickyFullWaitsQueueFullHonorsDisabledEscape(t *testing.T) {
+	groupID := int64(10130)
+	accounts := []Account{
+		{
+			ID:          21301,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			GroupIDs:    []int64{groupID},
+		},
+	}
+	cfg := newSchedulerTestOpenAIWSV2Config()
+	svc := &OpenAIGatewayService{
+		accountRepo: schedulerGroupAwareOpenAIAccountRepo{schedulerTestOpenAIAccountRepo{accounts: accounts}},
+		cache:       &schedulerTestGatewayCache{},
+		cfg:         cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{
+			acquireResults: map[int64]bool{21301: false},
+			contWaitCounts: map[int64]int{21301: cfg.Gateway.Scheduling.StickySessionMaxWaiting},
+		}),
+	}
+	scheduler := &defaultOpenAIAccountScheduler{service: svc, stats: newOpenAIAccountRuntimeStats()}
+	newRequest := func(disableEscape bool) OpenAIAccountScheduleRequest {
+		return OpenAIAccountScheduleRequest{
+			GroupID:               &groupID,
+			Platform:              PlatformOpenAI,
+			SessionHash:           "task-owner-session",
+			StickyAccountID:       21301,
+			PreserveStickyBinding: true,
+			DisableStickyEscape:   disableEscape,
+			StickyFullWaits:       true,
+			ContinuationEligible:  true,
+			RequestedModel:        "gpt-5.1",
+			RequiredTransport:     OpenAIUpstreamTransportAny,
+			RequiredCapability:    OpenAIEndpointCapabilityChatCompletions,
+		}
+	}
+
+	t.Run("escape disabled keeps waiting on the owner", func(t *testing.T) {
+		selection, escaped, err := scheduler.selectBySessionHash(context.Background(), newRequest(true))
+		require.NoError(t, err)
+		require.False(t, escaped, "任务属主锁定时队列满也不得溢出")
+		require.NotNil(t, selection)
+		require.NotNil(t, selection.WaitPlan)
+		require.Equal(t, int64(21301), selection.WaitPlan.AccountID)
+		require.Equal(t, AccountWaitClassContinuation, selection.WaitPlan.Class)
+	})
+
+	t.Run("escape allowed still spills", func(t *testing.T) {
+		selection, escaped, err := scheduler.selectBySessionHash(context.Background(), newRequest(false))
+		require.NoError(t, err)
+		require.True(t, escaped)
+		require.Nil(t, selection)
+	})
+}
+
 func newStickyBindPreservedSchedulerFixture(stickyModelMapping bool) (int64, []Account, *config.Config) {
 	groupID := int64(10120)
 	sticky := Account{
