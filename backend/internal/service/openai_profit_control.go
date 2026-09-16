@@ -362,6 +362,19 @@ const (
 	StickyBindPolicyMigrate
 )
 
+func (p StickyBindPolicy) String() string {
+	switch p {
+	case StickyBindPolicyLegacy:
+		return "legacy"
+	case StickyBindPolicyPreserve:
+		return "preserve"
+	case StickyBindPolicyMigrate:
+		return "migrate"
+	default:
+		return fmt.Sprintf("%d", int(p))
+	}
+}
+
 // BindStickySessionAfterProfitAdmission records the terminally admitted
 // account with the legacy policy. See BindStickySessionAfterAdmissionWithPolicy.
 func (s *OpenAIGatewayService) BindStickySessionAfterProfitAdmission(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {

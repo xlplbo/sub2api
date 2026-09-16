@@ -2795,7 +2795,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		admissionAfterFailover = false
 		profitVetoReselect = false
 		if err := h.gatewayService.BindStickySessionAfterAdmissionWithPolicy(ctx, apiKey.GroupID, sessionHash, account.ID, bindPolicy); err != nil {
-			reqLog.Warn("openai.websocket_bind_sticky_session_after_admission_failed", zap.Int64("account_id", account.ID), zap.String("policy", fmt.Sprint(bindPolicy)), zap.Error(err))
+			reqLog.Warn("openai.websocket_bind_sticky_session_after_admission_failed", zap.Int64("account_id", account.ID), zap.String("policy", bindPolicy.String()), zap.Error(err))
 		}
 
 		token, _, err := h.gatewayService.GetRequestCredential(ctx, c, account)
