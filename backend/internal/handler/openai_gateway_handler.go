@@ -3209,6 +3209,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					if failoverErr.ShouldReportAccountScheduleFailure() {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, wsForwardModel, false, nil), false, nil, err)
 					}
+					// 同账号重试自己抢槽，不取回挂起槽：先放掉，既不持账号槽等用户槽，也不会与下面的抢槽短暂双占。
+					if heldAccountSlot.releaseNow() {
+						reqLog.Debug("openai.websocket_account_slot_hold_released_for_same_account_retry", zap.Int64("account_id", account.ID))
+					}
 					if !ensureUserSlotHeld() {
 						return
 					}
