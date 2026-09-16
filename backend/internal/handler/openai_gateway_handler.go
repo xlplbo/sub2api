@@ -2514,7 +2514,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}()
 		c.Request = c.Request.WithContext(ctx)
 	}
-	waitBudget := &openAIWSAccountWaitBudget{turn: 1, continuation: previousResponseID != "" || strings.TrimSpace(c.GetHeader("x-codex-turn-state")) != ""}
+	firstFrameContinuation := previousResponseID != "" || strings.TrimSpace(c.GetHeader("x-codex-turn-state")) != ""
+	waitBudget := &openAIWSAccountWaitBudget{turn: 1, continuation: firstFrameContinuation}
 	closeAdmission := func(err error) {
 		releaseTurnSlots()
 		closeWSAccountAdmission(ctx, wsConn, err)
@@ -2764,6 +2765,21 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			selection.Account = latest
 			accountReleaseFunc = fastReleaseFunc
 			accountRefreshFunc = fastRefreshFunc
+		}
+		if openAIWSFirstAdmissionNonMigratable(switchCount, firstFrameContinuation, admissionMode, scheduleDecision, account.ID, func() int64 {
+			return h.gatewayService.LookupStickySessionAccountID(admissionCtx, apiKey.GroupID, sessionHash)
+		}) {
+			// 透传续聊帧被队满溢出或健康逃逸送到了别的账号：换过去恢复不了上下文，
+			// 释放刚拿到的槽、不写绑定、快速失败，由 codex 重试承担等待。
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			reqLog.Info("openai.websocket_passthrough_continuation_not_migratable",
+				zap.Int64("account_id", account.ID),
+				zap.String("schedule_layer", scheduleDecision.Layer),
+			)
+			closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
+			return
 		}
 		// 准入完成：门并入连接 ctx，turn 级复核与 failover 重选共用。
 		ctx = admissionCtx

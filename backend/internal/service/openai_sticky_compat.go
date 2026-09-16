@@ -151,6 +151,15 @@ func (s *OpenAIGatewayService) getStickySessionAccountID(ctx context.Context, gr
 	return accountID, err
 }
 
+// LookupStickySessionAccountID 只读会话绑定，供 handler 判定首次准入是否越过了活绑定；未绑定或读失败返回 0。
+func (s *OpenAIGatewayService) LookupStickySessionAccountID(ctx context.Context, groupID *int64, sessionHash string) int64 {
+	accountID, err := s.getStickySessionAccountID(ctx, groupID, sessionHash)
+	if err != nil || accountID <= 0 {
+		return 0
+	}
+	return accountID
+}
+
 func (s *OpenAIGatewayService) setStickySessionAccountID(ctx context.Context, groupID *int64, sessionHash string, accountID int64, ttl time.Duration) error {
 	if s == nil || s.cache == nil || accountID <= 0 {
 		return nil
