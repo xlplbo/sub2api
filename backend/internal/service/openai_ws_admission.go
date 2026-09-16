@@ -1,6 +1,10 @@
 package service
 
-import "github.com/tidwall/gjson"
+import (
+	"context"
+
+	"github.com/tidwall/gjson"
+)
 
 func (s *OpenAIGatewayService) resolveOpenAIWSIngressMode(account *Account) string {
 	if account.Platform == PlatformGrok || (s.pluginManager != nil && s.pluginManager.ShouldRouteOpenAIOAuth(account)) {
@@ -26,7 +30,31 @@ func (s *OpenAIGatewayService) ResolveOpenAIWSAccountAdmissionMode(account *Acco
 	return mode
 }
 
+// OpenAIAdmissionOptions 由入口在调用调度器前给出，随 ctx 进入调度请求。
+type OpenAIAdmissionOptions struct {
+	// ContinuationEligible 为真表示会话哈希来自真实会话标识：命中粘性或 previous_response 时
+	// 计划标续聊类、快抢不让出。回退种子哈希的连接置假：快抢在有续聊等待者时让出，计划标新会话类。
+	ContinuationEligible bool
+	// StickyFullWaits 为真时高级调度对粘性账号满槽不逃逸，改返回粘性等待计划。只有 WS 入口置位。
+	StickyFullWaits bool
+}
+
+type openAIAdmissionOptionsContextKey struct{}
+
+func WithOpenAIAdmissionOptions(ctx context.Context, opts OpenAIAdmissionOptions) context.Context {
+	return context.WithValue(ctx, openAIAdmissionOptionsContextKey{}, opts)
+}
+
+func openAIAdmissionOptionsFromContext(ctx context.Context) OpenAIAdmissionOptions {
+	if ctx != nil {
+		if opts, ok := ctx.Value(openAIAdmissionOptionsContextKey{}).(OpenAIAdmissionOptions); ok {
+			return opts
+		}
+	}
+	return OpenAIAdmissionOptions{ContinuationEligible: true}
+}
+
 func (s *OpenAIGatewayService) OpenAIWSAccountWaitPlan(account *Account) *AccountWaitPlan {
 	cfg := s.schedulingConfig()
-	return &AccountWaitPlan{AccountID: account.ID, MaxConcurrency: account.Concurrency, Timeout: cfg.StickySessionWaitTimeout, MaxWaiting: cfg.StickySessionMaxWaiting}
+	return &AccountWaitPlan{AccountID: account.ID, MaxConcurrency: account.Concurrency, Timeout: cfg.StickySessionWaitTimeout, MaxWaiting: cfg.StickySessionMaxWaiting, Class: AccountWaitClassContinuation}
 }

@@ -91,7 +91,11 @@ type OpenAIAccountScheduleRequest struct {
 	// RequireCompact is only for legacy /responses/compact capability filtering
 	// and compact_model_mapping; native remote compaction v2 leaves it false.
 	RequireCompact bool
-	ExcludedIDs    map[int64]struct{}
+	// ContinuationEligible 为假时粘性与 previous_response 快抢在有续聊等待者时让出，计划标新会话类。
+	ContinuationEligible bool
+	// StickyFullWaits 为真时粘性账号满槽不逃逸，见 selectBySessionHash。
+	StickyFullWaits bool
+	ExcludedIDs     map[int64]struct{}
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -583,6 +587,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			Account:     account,
 			Acquired:    true,
 			ReleaseFunc: result.ReleaseFunc,
+			RefreshFunc: result.RefreshFunc,
 		}), false, nil
 	}
 
@@ -1241,6 +1246,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			Account:     fresh,
 			Acquired:    true,
 			ReleaseFunc: result.ReleaseFunc,
+			RefreshFunc: result.RefreshFunc,
 		}), compactBlocked, nil
 	}
 	return nil, compactBlocked, nil
@@ -1332,6 +1338,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 				Account:     account,
 				Acquired:    true,
 				ReleaseFunc: result.ReleaseFunc,
+				RefreshFunc: result.RefreshFunc,
 			}), nil
 		}
 		if s.service.concurrencyService != nil {
@@ -2442,6 +2449,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		stickyPreviousAccountID = s.ResolveAccountIDByPreviousResponseIDForScheduler(ctx, groupID, previousResponseID, requestedModel, excludedIDs, requiredCapability, requireCompact)
 	}
 
+	admission := openAIAdmissionOptionsFromContext(ctx)
 	return scheduler.Select(ctx, OpenAIAccountScheduleRequest{
 		GroupID:                 groupID,
 		Platform:                platform,
@@ -2461,6 +2469,8 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		RequiredCapability:      requiredCapability,
 		RequiredImageCapability: requiredImageCapability,
 		RequireCompact:          requireCompact,
+		ContinuationEligible:    admission.ContinuationEligible,
+		StickyFullWaits:         admission.StickyFullWaits,
 		ExcludedIDs:             excludedIDs,
 	})
 }

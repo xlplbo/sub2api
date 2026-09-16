@@ -568,17 +568,43 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
 	return false
 }
 
+// AccountWaitClass 是等待计划的准入类别。零值沿用旧行为：写旧计数键、不让出，
+// Anthropic / Gemini 等未设类别的路径行为不变。
+type AccountWaitClass int
+
+const (
+	AccountWaitClassLegacy AccountWaitClass = iota
+	// AccountWaitClassNewSession 走旧计数键与回退上限，有续聊等待者时让出。
+	AccountWaitClassNewSession
+	// AccountWaitClassContinuation 走续聊计数键与粘性上限，不让出。
+	AccountWaitClassContinuation
+)
+
+func (c AccountWaitClass) String() string {
+	switch c {
+	case AccountWaitClassNewSession:
+		return "new_session"
+	case AccountWaitClassContinuation:
+		return "continuation"
+	default:
+		return "legacy"
+	}
+}
+
 type AccountWaitPlan struct {
 	AccountID      int64
 	MaxConcurrency int
 	Timeout        time.Duration
 	MaxWaiting     int
+	Class          AccountWaitClass
 }
 
 type AccountSelectionResult struct {
 	Account     *Account
 	Acquired    bool
 	ReleaseFunc func()
+	// RefreshFunc 与 ReleaseFunc 同源，为已抢到的账号槽续租；未抢槽或无限制账号时为 nil。
+	RefreshFunc func(ctx context.Context) (bool, error)
 	WaitPlan    *AccountWaitPlan // nil means no wait allowed
 	// stickySessionHit 标记账号来自会话粘性绑定命中，供非高级调度路径回填决策标签。
 	stickySessionHit bool

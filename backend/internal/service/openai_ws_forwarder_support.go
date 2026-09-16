@@ -489,6 +489,7 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 			Account:     account,
 			Acquired:    true,
 			ReleaseFunc: result.ReleaseFunc,
+			RefreshFunc: result.RefreshFunc,
 		}), nil
 	}
 

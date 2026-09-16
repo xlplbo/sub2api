@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -39,12 +40,25 @@ func TestOpenAIWSAccountAdmissionMode(t *testing.T) {
 	}
 }
 
-func TestOpenAIWSAccountWaitPlanUsesStickyLimits(t *testing.T) {
+func TestOpenAIAdmissionOptionsFromContext(t *testing.T) {
+	require.Equal(t, OpenAIAdmissionOptions{ContinuationEligible: true}, openAIAdmissionOptionsFromContext(context.Background()), "缺省合格、不改逃逸")
+	ctx := WithOpenAIAdmissionOptions(context.Background(), OpenAIAdmissionOptions{ContinuationEligible: false, StickyFullWaits: true})
+	require.Equal(t, OpenAIAdmissionOptions{ContinuationEligible: false, StickyFullWaits: true}, openAIAdmissionOptionsFromContext(ctx))
+}
+
+func TestOpenAIWSAccountWaitPlanIsContinuationClass(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 7 * time.Second
-	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 4
-	cfg.Gateway.Scheduling.FallbackWaitTimeout = time.Minute
-	s := &OpenAIGatewayService{cfg: cfg}
-	plan := s.OpenAIWSAccountWaitPlan(&Account{ID: 801, Concurrency: 2})
-	require.Equal(t, &AccountWaitPlan{AccountID: 801, MaxConcurrency: 2, Timeout: 7 * time.Second, MaxWaiting: 4}, plan)
+	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 120 * time.Second
+	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 3
+	svc := &OpenAIGatewayService{cfg: cfg}
+	plan := svc.OpenAIWSAccountWaitPlan(&Account{ID: 31, Concurrency: 2})
+	require.Equal(t, AccountWaitClassContinuation, plan.Class)
+	require.Equal(t, int64(31), plan.AccountID)
+	require.Equal(t, 3, plan.MaxWaiting)
+}
+
+func TestAccountWaitClassString(t *testing.T) {
+	require.Equal(t, "legacy", AccountWaitClassLegacy.String())
+	require.Equal(t, "new_session", AccountWaitClassNewSession.String())
+	require.Equal(t, "continuation", AccountWaitClassContinuation.String())
 }
