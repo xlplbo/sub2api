@@ -11,6 +11,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	openAIWSAccountWaitPhaseInitial    = "initial"
+	openAIWSAccountWaitPhaseSubsequent = "subsequent"
+	openAIWSAccountWaitPhaseRetry      = "retry"
+)
+
 type openAIWSAccountWaitBudget struct {
 	deadline     time.Time
 	turn         int
@@ -24,11 +30,15 @@ func (b *openAIWSAccountWaitBudget) nextTurn() {
 	b.continuation = true
 }
 
-func (b *openAIWSAccountWaitBudget) canWait(mode string) bool {
+// 透传后续轮的帧在准入前一直由网关持有、尚未写入上游，可与其他模式一样排队等槽。
+func (b *openAIWSAccountWaitBudget) canWait(mode, phase string) bool {
 	if mode == service.OpenAIWSIngressModeOff {
 		return false
 	}
-	return mode != service.OpenAIWSIngressModePassthrough || (!b.continuation && !b.requestSent.Load())
+	if mode != service.OpenAIWSIngressModePassthrough || phase == openAIWSAccountWaitPhaseSubsequent {
+		return true
+	}
+	return !b.continuation && !b.requestSent.Load()
 }
 
 func (b *openAIWSAccountWaitBudget) waitDeadline(timeout time.Duration, retryDeadline time.Time) time.Time {
@@ -81,7 +91,7 @@ func (h *OpenAIGatewayHandler) acquireWSAccountSlot(ctx context.Context, account
 		}
 		return release, nil
 	}
-	if !account.IsOpenAI() || !budget.canWait(mode) || plan == nil || plan.Timeout <= 0 || plan.MaxWaiting <= 0 {
+	if !account.IsOpenAI() || !budget.canWait(mode, phase) || plan == nil || plan.Timeout <= 0 || plan.MaxWaiting <= 0 {
 		return nil, openAIWSAccountBusyError()
 	}
 	deadline := budget.waitDeadline(plan.Timeout, retryDeadline)

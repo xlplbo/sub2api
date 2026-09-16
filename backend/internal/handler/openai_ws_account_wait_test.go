@@ -32,63 +32,68 @@ type openAIWSAccountWaitSession struct {
 
 func TestOpenAIWSAccountWait_ExitReleasesResources(t *testing.T) {
 	for _, mode := range []string{service.OpenAIWSIngressModeCtxPool, service.OpenAIWSIngressModeHTTPBridge, service.OpenAIWSIngressModePassthrough} {
-		for _, reason := range []string{"timeout", "queue_full", "disconnect", "early_frame_disconnect"} {
-			t.Run(mode+"/"+reason, func(t *testing.T) {
-				f := newOpenAIWSAccountWaitSession(t, mode, 250*time.Millisecond)
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				defer cancel()
-				ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
-				require.NoError(t, err)
-				require.True(t, ok)
-				if reason == "queue_full" {
-					for range 2 {
-						ok, err = f.cache.IncrementAccountWaitCount(ctx, 801, 2)
-						require.NoError(t, err)
-						require.True(t, ok)
+		for _, later := range []bool{false, true} {
+			for _, reason := range []string{"timeout", "queue_full", "disconnect", "early_frame_disconnect"} {
+				t.Run(fmt.Sprintf("%s/later=%v/%s", mode, later, reason), func(t *testing.T) {
+					f := newOpenAIWSAccountWaitSession(t, mode, 250*time.Millisecond)
+					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+					defer cancel()
+					if later {
+						completeOpenAIWSAccountWaitTurn(t, ctx, f)
 					}
-				}
-				require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"blocked"}`)))
-				if strings.Contains(reason, "disconnect") {
-					require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond)
-					if reason == "early_frame_disconnect" {
-						require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"early"}`)))
+					ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
+					require.NoError(t, err)
+					require.True(t, ok)
+					if reason == "queue_full" {
+						for range 2 {
+							ok, err = f.cache.IncrementAccountWaitCount(ctx, 801, 2)
+							require.NoError(t, err)
+							require.True(t, ok)
+						}
 					}
-					_ = f.conn.CloseNow()
-				} else {
-					_, _, err = f.conn.Read(ctx)
-					require.Equal(t, coderws.StatusTryAgainLater, coderws.CloseStatus(err))
-				}
-				select {
-				case <-f.finished:
-				case <-ctx.Done():
-					t.Fatal("handler did not clean up")
-				}
-				waiting, err := f.cache.GetAccountWaitingCount(ctx, 801)
-				require.NoError(t, err)
-				if reason == "queue_full" {
-					require.Equal(t, 2, waiting)
-				} else {
-					require.Zero(t, waiting)
-				}
-				accounts, err := f.cache.GetAccountConcurrency(ctx, 801)
-				require.NoError(t, err)
-				require.Equal(t, 1, accounts, "must preserve the other request's slot")
-				users, err := f.cache.GetUserConcurrency(ctx, 1702)
-				require.NoError(t, err)
-				require.Zero(t, users)
-				select {
-				case <-f.requests:
-					t.Fatal("canceled/expired request reached upstream")
-				default:
-				}
-			})
+					require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"blocked"}`)))
+					if strings.Contains(reason, "disconnect") {
+						require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond)
+						if reason == "early_frame_disconnect" {
+							require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"early"}`)))
+						}
+						_ = f.conn.CloseNow()
+					} else {
+						_, _, err = f.conn.Read(ctx)
+						require.Equal(t, coderws.StatusTryAgainLater, coderws.CloseStatus(err))
+					}
+					select {
+					case <-f.finished:
+					case <-ctx.Done():
+						t.Fatal("handler did not clean up")
+					}
+					waiting, err := f.cache.GetAccountWaitingCount(ctx, 801)
+					require.NoError(t, err)
+					if reason == "queue_full" {
+						require.Equal(t, 2, waiting)
+					} else {
+						require.Zero(t, waiting)
+					}
+					accounts, err := f.cache.GetAccountConcurrency(ctx, 801)
+					require.NoError(t, err)
+					require.Equal(t, 1, accounts, "must preserve the other request's slot")
+					users, err := f.cache.GetUserConcurrency(ctx, 1702)
+					require.NoError(t, err)
+					require.Zero(t, users)
+					select {
+					case <-f.requests:
+						t.Fatal("canceled/expired request reached upstream")
+					default:
+					}
+				})
+			}
 		}
 	}
 }
 
 func TestOpenAIWSAccountWaitBudget_Boundaries(t *testing.T) {
 	b := &openAIWSAccountWaitBudget{turn: 1}
-	require.True(t, b.canWait(service.OpenAIWSIngressModePassthrough))
+	require.True(t, b.canWait(service.OpenAIWSIngressModePassthrough, openAIWSAccountWaitPhaseInitial))
 	first := b.waitDeadline(time.Second, time.Time{})
 	require.Equal(t, first, b.waitDeadline(time.Minute, time.Time{}), "retry must not reset the wait budget")
 	retryDeadline := time.Now().Add(50 * time.Millisecond)
@@ -96,14 +101,20 @@ func TestOpenAIWSAccountWaitBudget_Boundaries(t *testing.T) {
 	require.Equal(t, first, b.deadline, "same-account retry must not shorten the turn's account wait budget")
 	require.Equal(t, first, b.waitDeadline(time.Minute, time.Time{}), "failover must retain the account wait budget")
 	b.requestSent.Store(true)
-	require.False(t, b.canWait(service.OpenAIWSIngressModePassthrough), "sent request cannot become a fresh passthrough request")
+	require.False(t, b.canWait(service.OpenAIWSIngressModePassthrough, openAIWSAccountWaitPhaseInitial), "sent request cannot become a fresh passthrough request")
+	require.False(t, b.canWait(service.OpenAIWSIngressModePassthrough, openAIWSAccountWaitPhaseRetry))
+	require.True(t, b.canWait(service.OpenAIWSIngressModePassthrough, openAIWSAccountWaitPhaseSubsequent), "a later turn is held by the gateway until admitted")
 	b.nextTurn()
 	require.True(t, b.deadline.IsZero())
-	require.False(t, b.canWait(service.OpenAIWSIngressModePassthrough))
-	require.True(t, b.canWait(service.OpenAIWSIngressModeCtxPool))
-	require.True(t, b.canWait(service.OpenAIWSIngressModeHTTPBridge))
-	require.False(t, b.canWait(service.OpenAIWSIngressModeOff))
-	require.False(t, (&openAIWSAccountWaitBudget{continuation: true}).canWait(service.OpenAIWSIngressModePassthrough))
+	for _, phase := range []string{openAIWSAccountWaitPhaseInitial, openAIWSAccountWaitPhaseRetry, openAIWSAccountWaitPhaseSubsequent} {
+		require.Equal(t, phase == openAIWSAccountWaitPhaseSubsequent, b.canWait(service.OpenAIWSIngressModePassthrough, phase), phase)
+		require.True(t, b.canWait(service.OpenAIWSIngressModeCtxPool, phase), phase)
+		require.True(t, b.canWait(service.OpenAIWSIngressModeHTTPBridge, phase), phase)
+		require.False(t, b.canWait(service.OpenAIWSIngressModeOff, phase), phase)
+	}
+	continuation := &openAIWSAccountWaitBudget{continuation: true}
+	require.False(t, continuation.canWait(service.OpenAIWSIngressModePassthrough, openAIWSAccountWaitPhaseInitial))
+	require.True(t, continuation.canWait(service.OpenAIWSIngressModePassthrough, openAIWSAccountWaitPhaseSubsequent))
 }
 
 func TestOpenAIWSAccountWait_NoPlanAndAcquireCancellation(t *testing.T) {
@@ -128,7 +139,7 @@ func TestOpenAIWSAccountWait_NoPlanAndAcquireCancellation(t *testing.T) {
 			if scenario == "canceled_after_wait_acquire" {
 				plan = &service.AccountWaitPlan{Timeout: time.Second, MaxWaiting: 2}
 			}
-			release, err := h.acquireWSAccountSlot(ctx, &service.Account{ID: 801, Platform: service.PlatformOpenAI}, 1, plan, &openAIWSAccountWaitBudget{turn: 1}, service.OpenAIWSIngressModeCtxPool, "initial", time.Time{}, zap.NewNop())
+			release, err := h.acquireWSAccountSlot(ctx, &service.Account{ID: 801, Platform: service.PlatformOpenAI}, 1, plan, &openAIWSAccountWaitBudget{turn: 1}, service.OpenAIWSIngressModeCtxPool, openAIWSAccountWaitPhaseInitial, time.Time{}, zap.NewNop())
 			require.Nil(t, release)
 			require.Error(t, err)
 			if strings.HasPrefix(scenario, "canceled_after_") {
@@ -177,7 +188,7 @@ func TestOpenAIWSAccountWait_DeadlineAdmissionBoundaries(t *testing.T) {
 				retryDeadline = time.Now().Add(-time.Second)
 			}
 			release, err := h.acquireWSAccountSlot(context.Background(), &service.Account{ID: 801, Platform: service.PlatformOpenAI}, 1,
-				&service.AccountWaitPlan{Timeout: time.Second, MaxWaiting: 2}, budget, service.OpenAIWSIngressModeCtxPool, "retry", retryDeadline, zap.NewNop())
+				&service.AccountWaitPlan{Timeout: time.Second, MaxWaiting: 2}, budget, service.OpenAIWSIngressModeCtxPool, openAIWSAccountWaitPhaseRetry, retryDeadline, zap.NewNop())
 			if release != nil {
 				release()
 			}
@@ -215,7 +226,7 @@ func TestOpenAIWSAccountWait_RetryDeadlineDoesNotExpireFailoverBudget(t *testing
 			plan := &service.AccountWaitPlan{Timeout: time.Minute, MaxWaiting: 2}
 			retryDeadline := time.Now().Add(250 * time.Millisecond)
 			release, err := h.acquireWSAccountSlot(context.Background(), &service.Account{ID: 801, Platform: service.PlatformOpenAI}, 1,
-				plan, budget, service.OpenAIWSIngressModeCtxPool, "retry", retryDeadline, zap.NewNop())
+				plan, budget, service.OpenAIWSIngressModeCtxPool, openAIWSAccountWaitPhaseRetry, retryDeadline, zap.NewNop())
 			if release != nil {
 				release()
 			}
@@ -232,7 +243,7 @@ func TestOpenAIWSAccountWait_RetryDeadlineDoesNotExpireFailoverBudget(t *testing
 			<-time.After(time.Until(retryDeadline))
 			require.False(t, budget.expired(), "retry window expiry must not exhaust the turn's admission budget")
 			release, err = h.acquireWSAccountSlot(context.Background(), &service.Account{ID: 802, Platform: service.PlatformOpenAI}, 1,
-				plan, budget, service.OpenAIWSIngressModeCtxPool, "initial", time.Time{}, zap.NewNop())
+				plan, budget, service.OpenAIWSIngressModeCtxPool, openAIWSAccountWaitPhaseInitial, time.Time{}, zap.NewNop())
 			require.NoError(t, err)
 			require.NotNil(t, release)
 			release()
@@ -243,19 +254,12 @@ func TestOpenAIWSAccountWait_RetryDeadlineDoesNotExpireFailoverBudget(t *testing
 func TestOpenAIWSAccountWait_LeaseLossReleasesResources(t *testing.T) {
 	for _, mode := range []string{service.OpenAIWSIngressModeCtxPool, service.OpenAIWSIngressModeHTTPBridge, service.OpenAIWSIngressModePassthrough} {
 		for _, later := range []bool{false, true} {
-			if later && mode == service.OpenAIWSIngressModePassthrough {
-				continue
-			}
 			t.Run(fmt.Sprintf("%s/later=%v", mode, later), func(t *testing.T) {
 				f := newOpenAIWSAccountWaitSession(t, mode, 2*time.Second)
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
 				if later {
-					require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
-					_, _, err := f.conn.Read(ctx)
-					require.NoError(t, err)
-					<-f.requests
-					require.Eventually(t, func() bool { n, _ := f.cache.GetAccountConcurrency(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
+					completeOpenAIWSAccountWaitTurn(t, ctx, f)
 				}
 				ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
 				require.NoError(t, err)
@@ -380,6 +384,15 @@ func newOpenAIWSAccountWaitSession(t *testing.T, mode string, timeout time.Durat
 
 const accountWaitCompleted = `{"type":"response.completed","response":{"id":"resp_wait","model":"gpt-5.1","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}`
 
+func completeOpenAIWSAccountWaitTurn(t *testing.T, ctx context.Context, f *openAIWSAccountWaitSession) {
+	t.Helper()
+	require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
+	_, _, err := f.conn.Read(ctx)
+	require.NoError(t, err)
+	<-f.requests
+	require.Eventually(t, func() bool { n, _ := f.cache.GetAccountConcurrency(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
+}
+
 func TestOpenAIWSAccountWait_ReleaseContinuesSameConnection(t *testing.T) {
 	for _, mode := range []string{service.OpenAIWSIngressModeCtxPool, service.OpenAIWSIngressModeHTTPBridge, service.OpenAIWSIngressModePassthrough} {
 		for _, later := range []bool{false, true} {
@@ -388,21 +401,12 @@ func TestOpenAIWSAccountWait_ReleaseContinuesSameConnection(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				if later {
-					require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
-					_, _, err := f.conn.Read(ctx)
-					require.NoError(t, err)
-					<-f.requests
-					require.Eventually(t, func() bool { n, _ := f.cache.GetAccountConcurrency(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
+					completeOpenAIWSAccountWaitTurn(t, ctx, f)
 				}
 				acquired, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other-request")
 				require.NoError(t, err)
 				require.True(t, acquired)
 				require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"waiting"}`)))
-				if later && mode == service.OpenAIWSIngressModePassthrough {
-					_, _, err = f.conn.Read(ctx)
-					require.Equal(t, coderws.StatusTryAgainLater, coderws.CloseStatus(err))
-					return
-				}
 				require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond, "request should wait without closing")
 				select {
 				case <-f.requests:

@@ -2718,7 +2718,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
 				return
 			}
-			fastReleaseFunc, err := h.acquireWSAccountSlot(ctx, account, accountMaxConcurrency, selection.WaitPlan, waitBudget, admissionMode, "initial", time.Time{}, reqLog)
+			fastReleaseFunc, err := h.acquireWSAccountSlot(ctx, account, accountMaxConcurrency, selection.WaitPlan, waitBudget, admissionMode, openAIWSAccountWaitPhaseInitial, time.Time{}, reqLog)
 			if err != nil {
 				reqLog.Warn("openai.websocket_account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 				closeAdmission(err)
@@ -2909,7 +2909,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if !userAcquired {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
 				}
-				accountReleaseFunc, err := h.acquireWSAccountSlot(ctx, account, accountMaxConcurrency, h.gatewayService.OpenAIWSAccountWaitPlan(account), waitBudget, admissionMode, "subsequent", time.Time{}, reqLog)
+				accountReleaseFunc, err := h.acquireWSAccountSlot(ctx, account, accountMaxConcurrency, h.gatewayService.OpenAIWSAccountWaitPlan(account), waitBudget, admissionMode, openAIWSAccountWaitPhaseSubsequent, time.Time{}, reqLog)
 				if err != nil {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
@@ -3126,7 +3126,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						if waitBudget.turn == 1 {
 							retryWaitPlan = selection.WaitPlan
 						}
-						accountRelease, acquireErr := h.acquireWSAccountSlot(ctx, account, accountMaxConcurrency, retryWaitPlan, waitBudget, admissionMode, "retry", failoverErr.SameAccountRetryDeadline, reqLog)
+						accountRelease, acquireErr := h.acquireWSAccountSlot(ctx, account, accountMaxConcurrency, retryWaitPlan, waitBudget, admissionMode, openAIWSAccountWaitPhaseRetry, failoverErr.SameAccountRetryDeadline, reqLog)
 						if acquireErr != nil {
 							reqLog.Warn("openai.websocket_same_account_retry_slot_unavailable", zap.Int64("account_id", account.ID), zap.Error(acquireErr))
 							closeAdmission(acquireErr)
