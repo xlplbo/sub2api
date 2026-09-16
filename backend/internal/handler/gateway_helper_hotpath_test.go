@@ -54,6 +54,10 @@ func (s *helperConcurrencyCacheStub) ReleaseAccountSlot(ctx context.Context, acc
 	return nil
 }
 
+func (s *helperConcurrencyCacheStub) RefreshAccountSlot(ctx context.Context, accountID int64, requestID string) (bool, error) {
+	return true, nil
+}
+
 func (s *helperConcurrencyCacheStub) GetAccountConcurrency(ctx context.Context, accountID int64) (int, error) {
 	return 0, nil
 }
@@ -75,6 +79,18 @@ func (s *helperConcurrencyCacheStub) DecrementAccountWaitCount(ctx context.Conte
 }
 
 func (s *helperConcurrencyCacheStub) GetAccountWaitingCount(ctx context.Context, accountID int64) (int, error) {
+	return 0, nil
+}
+
+func (s *helperConcurrencyCacheStub) IncrementAccountContinuationWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error) {
+	return true, nil
+}
+
+func (s *helperConcurrencyCacheStub) DecrementAccountContinuationWaitCount(ctx context.Context, accountID int64) error {
+	return nil
+}
+
+func (s *helperConcurrencyCacheStub) GetAccountContinuationWaitingCount(ctx context.Context, accountID int64) (int, error) {
 	return 0, nil
 }
 
