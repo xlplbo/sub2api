@@ -41,19 +41,26 @@ func TestOpenAIWSAccountWait_ExitReleasesResources(t *testing.T) {
 					if later {
 						completeOpenAIWSAccountWaitTurn(t, ctx, f)
 					}
+					// 续聊轮（later=true）固定走续聊类，按 wait:account:cont 计数；首轮仍走旧键。
+					incrementWaitCount := f.cache.IncrementAccountWaitCount
+					getWaitingCount := f.cache.GetAccountWaitingCount
+					if later {
+						incrementWaitCount = f.cache.IncrementAccountContinuationWaitCount
+						getWaitingCount = f.cache.GetAccountContinuationWaitingCount
+					}
 					ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
 					require.NoError(t, err)
 					require.True(t, ok)
 					if reason == "queue_full" {
 						for range 2 {
-							ok, err = f.cache.IncrementAccountWaitCount(ctx, 801, 2)
+							ok, err = incrementWaitCount(ctx, 801, 2)
 							require.NoError(t, err)
 							require.True(t, ok)
 						}
 					}
 					require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"blocked"}`)))
 					if strings.Contains(reason, "disconnect") {
-						require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond)
+						require.Eventually(t, func() bool { n, _ := getWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond)
 						if reason == "early_frame_disconnect" {
 							require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"early"}`)))
 						}
@@ -67,7 +74,7 @@ func TestOpenAIWSAccountWait_ExitReleasesResources(t *testing.T) {
 					case <-ctx.Done():
 						t.Fatal("handler did not clean up")
 					}
-					waiting, err := f.cache.GetAccountWaitingCount(ctx, 801)
+					waiting, err := getWaitingCount(ctx, 801)
 					require.NoError(t, err)
 					if reason == "queue_full" {
 						require.Equal(t, 2, waiting)
@@ -261,11 +268,16 @@ func TestOpenAIWSAccountWait_LeaseLossReleasesResources(t *testing.T) {
 				if later {
 					completeOpenAIWSAccountWaitTurn(t, ctx, f)
 				}
+				// 续聊轮（later=true）固定走续聊类，按 wait:account:cont 计数；首轮仍走旧键。
+				getWaitingCount := f.cache.GetAccountWaitingCount
+				if later {
+					getWaitingCount = f.cache.GetAccountContinuationWaitingCount
+				}
 				ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
 				require.NoError(t, err)
 				require.True(t, ok)
 				require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"waiting"}`)))
-				require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond)
+				require.Eventually(t, func() bool { n, _ := getWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond)
 				(<-f.cancel)(service.ErrOpenAIWSIngressLeaseLost)
 				_, _, err = f.conn.Read(ctx)
 				require.Equal(t, coderws.StatusTryAgainLater, coderws.CloseStatus(err))
@@ -275,7 +287,7 @@ func TestOpenAIWSAccountWait_LeaseLossReleasesResources(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatal("handler did not clean up")
 				}
-				n, err := f.cache.GetAccountWaitingCount(ctx, 801)
+				n, err := getWaitingCount(ctx, 801)
 				require.NoError(t, err)
 				require.Zero(t, n)
 				n, err = f.cache.GetUserConcurrency(ctx, 1702)
@@ -403,11 +415,16 @@ func TestOpenAIWSAccountWait_ReleaseContinuesSameConnection(t *testing.T) {
 				if later {
 					completeOpenAIWSAccountWaitTurn(t, ctx, f)
 				}
+				// 续聊轮（later=true）固定走续聊类，按 wait:account:cont 计数；首轮仍走旧键。
+				getWaitingCount := f.cache.GetAccountWaitingCount
+				if later {
+					getWaitingCount = f.cache.GetAccountContinuationWaitingCount
+				}
 				acquired, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other-request")
 				require.NoError(t, err)
 				require.True(t, acquired)
 				require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"waiting"}`)))
-				require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond, "request should wait without closing")
+				require.Eventually(t, func() bool { n, _ := getWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond, "request should wait without closing")
 				select {
 				case <-f.requests:
 					t.Fatal("upstream called before account admission")
@@ -423,8 +440,93 @@ func TestOpenAIWSAccountWait_ReleaseContinuesSameConnection(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatal("upstream request missing")
 				}
-				require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
+				require.Eventually(t, func() bool { n, _ := getWaitingCount(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
 			})
 		}
 	}
+}
+
+func TestOpenAIWSAccountWait_ContinuationQueueIgnoresLegacyWaiters(t *testing.T) {
+	f := newOpenAIWSAccountWaitSession(t, service.OpenAIWSIngressModeCtxPool, 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	completeOpenAIWSAccountWaitTurn(t, ctx, f)
+
+	ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
+	require.NoError(t, err)
+	require.True(t, ok)
+	for range 2 {
+		ok, err = f.cache.IncrementAccountWaitCount(ctx, 801, 2)
+		require.NoError(t, err)
+		require.True(t, ok)
+	}
+
+	require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"second"}`)))
+	require.Eventually(t, func() bool { n, _ := f.cache.GetAccountContinuationWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond, "后续轮按续聊类入队，不被旧键上的 2 个等待者挡住")
+	select {
+	case <-f.requests:
+		t.Fatal("等待期间不得有上游请求")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	require.NoError(t, f.cache.ReleaseAccountSlot(ctx, 801, "other"))
+	_, body, err := f.conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(body, "type").String())
+	<-f.requests
+	require.Eventually(t, func() bool { n, _ := f.cache.GetAccountContinuationWaitingCount(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
+}
+
+func TestOpenAIWSAccountWait_NewSessionYieldsToContinuationWaiters(t *testing.T) {
+	f := newOpenAIWSAccountWaitSession(t, service.OpenAIWSIngressModeCtxPool, 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+
+	ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = f.cache.IncrementAccountContinuationWaitCount(ctx, 801, 3)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
+	require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond, "首帧无会话标识的连接是新会话类，进旧键")
+
+	require.NoError(t, f.cache.ReleaseAccountSlot(ctx, 801, "other"))
+	select {
+	case <-f.requests:
+		t.Fatal("有续聊等待者时新会话不得抢到空出的槽并转发上游")
+	case <-time.After(300 * time.Millisecond):
+	}
+	n, err := f.cache.GetAccountConcurrency(ctx, 801)
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "有续聊等待者时新会话不得拿走空出的槽")
+
+	require.NoError(t, f.cache.DecrementAccountContinuationWaitCount(ctx, 801))
+	_, body, err := f.conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(body, "type").String())
+	<-f.requests
+}
+
+func TestOpenAIWSAccountWait_NewSessionYieldsAtEntryWhenSlotFree(t *testing.T) {
+	f := newOpenAIWSAccountWaitSession(t, service.OpenAIWSIngressModeCtxPool, 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	ok, err := f.cache.IncrementAccountContinuationWaitCount(ctx, 801, 3)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
+	time.Sleep(400 * time.Millisecond)
+	n, err := f.cache.GetAccountConcurrency(ctx, 801)
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "账号有空槽但有续聊等待者，新会话在入口也不得快抢")
+	require.Eventually(t, func() bool { c, _ := f.cache.GetAccountWaitingCount(ctx, 801); return c == 1 }, time.Second, time.Millisecond, "进旧键排队")
+
+	require.NoError(t, f.cache.DecrementAccountContinuationWaitCount(ctx, 801))
+	_, body, err := f.conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(body, "type").String())
+	<-f.requests
 }

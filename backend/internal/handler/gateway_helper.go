@@ -221,6 +221,30 @@ func (h *ConcurrencyHelper) DecrementAccountWaitCount(ctx context.Context, accou
 	h.concurrencyService.DecrementAccountWaitCount(ctx, accountID)
 }
 
+// IncrementAccountContinuationWaitCount 续聊类等待入队，只与续聊等待者比较上限。
+func (h *ConcurrencyHelper) IncrementAccountContinuationWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error) {
+	return h.concurrencyService.IncrementAccountContinuationWaitCount(ctx, accountID, maxWait)
+}
+
+func (h *ConcurrencyHelper) DecrementAccountContinuationWaitCount(ctx context.Context, accountID int64) {
+	h.concurrencyService.DecrementAccountContinuationWaitCount(ctx, accountID)
+}
+
+// HasContinuationWaiters 供新会话类抢槽前让出；读失败按无等待处理。
+func (h *ConcurrencyHelper) HasContinuationWaiters(ctx context.Context, accountID int64) bool {
+	waiting, err := h.concurrencyService.GetAccountContinuationWaitingCount(ctx, accountID)
+	return err == nil && waiting > 0
+}
+
+// TryAcquireAccountSlotForPlan 是入口快抢。调度器因有续聊等待者而返回新会话等待计划时，账号可能仍有空槽，
+// 这里若照常快抢就绕过了让出；新会话类先看续聊等待数，有就直接进等待，其余类别照常快抢。
+func (h *ConcurrencyHelper) TryAcquireAccountSlotForPlan(ctx context.Context, accountID int64, maxConcurrency int, class service.AccountWaitClass) (*service.AcquireResult, error) {
+	if class == service.AccountWaitClassNewSession && h.HasContinuationWaiters(ctx, accountID) {
+		return &service.AcquireResult{}, nil
+	}
+	return h.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
+}
+
 // TryAcquireUserSlot 尝试立即获取用户并发槽位。
 // 返回值: (releaseFunc, acquired, error)
 func (h *ConcurrencyHelper) TryAcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int) (func(), bool, error) {

@@ -2540,11 +2540,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 
-	sessionHash := h.gatewayService.GenerateSessionHashWithFallback(
-		c,
-		firstMessage,
-		openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
-	)
+	sessionHash := h.gatewayService.GenerateSessionHash(c, firstMessage)
+	// 首帧带真实会话标识才有续聊资格；回退种子哈希是同 key 共享的绑定，不得借它插到续聊等待者前面。
+	continuationEligible := sessionHash != ""
+	if sessionHash == "" {
+		sessionHash = h.gatewayService.GenerateSessionHashWithFallback(
+			c,
+			firstMessage,
+			openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
+		)
+	}
+	ctx = service.WithOpenAIAdmissionOptions(ctx, service.OpenAIAdmissionOptions{ContinuationEligible: continuationEligible})
 	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, reqModel)
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
