@@ -16,7 +16,9 @@ func newContinuationWaitTestCache(t *testing.T) (*concurrencyCache, *redis.Clien
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	return NewConcurrencyCache(client, 15, 900).(*concurrencyCache), client
+	cache, ok := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+	require.True(t, ok)
+	return cache, client
 }
 
 func TestContinuationWaitCountIsIndependentFromLegacyWaitCount(t *testing.T) {
@@ -89,7 +91,9 @@ func newRefreshTestCache(t *testing.T) (*concurrencyCache, *redis.Client, *minir
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	return NewConcurrencyCache(client, 15, 900).(*concurrencyCache), client, server
+	cache, ok := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+	require.True(t, ok)
+	return cache, client, server
 }
 
 func TestRefreshAccountSlotOnlyTouchesExistingMember(t *testing.T) {
