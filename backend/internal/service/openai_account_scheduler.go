@@ -2236,7 +2236,8 @@ func applyLegacySelectionDecision(decision *OpenAIAccountScheduleDecision, selec
 }
 
 // selectLegacyAccountByPreviousResponse 在非高级调度路径按 previous_response_id 命中持有该响应的账号，
-// 并施加与高级调度器 previous_response 层相同的分组、隐私、传输与能力校验；未命中返回 (nil, false, nil)。
+// 先按请求模型做渠道限制检查，再复用高级调度器 previous_response 层的账号兼容校验
+// （分组、隐私、运行期封禁、代理隔离、上游模型渠道限制、传输与能力）；未命中返回 (nil, false, nil)。
 func (s *OpenAIGatewayService) selectLegacyAccountByPreviousResponse(
 	ctx context.Context,
 	groupID *int64,
@@ -2253,6 +2254,9 @@ func (s *OpenAIGatewayService) selectLegacyAccountByPreviousResponse(
 	if strings.TrimSpace(previousResponseID) == "" || platform != PlatformOpenAI {
 		return nil, false, nil
 	}
+	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
+		return nil, false, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
+	}
 	selection, err := s.selectAccountByPreviousResponseIDForCapability(ctx, groupID, previousResponseID, requestedModel, excludedIDs, requiredCapability, requireCompact)
 	if err != nil {
 		return nil, false, err
@@ -2261,12 +2265,19 @@ func (s *OpenAIGatewayService) selectLegacyAccountByPreviousResponse(
 		return nil, false, nil
 	}
 	account := selection.Account
-	compatible := s.openAIAccountMatchesSchedulingGroup(account, groupID) &&
-		(!s.openAIGroupRequiresPrivacySet(ctx, groupID) || account.IsPrivacySet()) &&
-		!s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) &&
-		s.isOpenAIAccountTransportCompatible(account, requiredTransport) &&
-		accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability)
-	if !compatible {
+	scheduler := &defaultOpenAIAccountScheduler{service: s, stats: newOpenAIAccountRuntimeStats()}
+	compatible, _ := scheduler.isAccountRequestCompatibleReason(ctx, account, OpenAIAccountScheduleRequest{
+		GroupID:                 groupID,
+		Platform:                platform,
+		RequestedModel:          requestedModel,
+		RequiredTransport:       requiredTransport,
+		RequiredCapability:      requiredCapability,
+		RequiredImageCapability: requiredImageCapability,
+		RequireCompact:          requireCompact,
+		ExcludedIDs:             excludedIDs,
+		RequirePrivacySet:       s.openAIGroupRequiresPrivacySet(ctx, groupID),
+	})
+	if !s.openAIAccountMatchesSchedulingGroup(account, groupID) || !compatible || !scheduler.isAccountTransportCompatible(account, requiredTransport) {
 		if selection.ReleaseFunc != nil {
 			selection.ReleaseFunc()
 		}
