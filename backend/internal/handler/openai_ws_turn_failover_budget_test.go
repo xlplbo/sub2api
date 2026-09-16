@@ -205,7 +205,7 @@ func newOpenAIWSTurnBudgetSession(t *testing.T, mode string, responses []string,
 			t.Error(err)
 			return
 		}
-		defer conn.CloseNow()
+		defer func() { _ = conn.CloseNow() }()
 		for {
 			_, payload, err := conn.Read(r.Context())
 			if err != nil {

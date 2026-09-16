@@ -1139,25 +1139,24 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			stickyAccountID = accountID
 		}
 	}
+	continuationEligible := openAIAdmissionOptionsFromContext(ctx).ContinuationEligible
 	if s.concurrencyService == nil || !cfg.LoadBatchEnabled {
 		account, stickyHit, err := s.selectAccountForModelWithExclusionsStickyHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability, preferLowUpstreamRate)
 		if err != nil {
 			return nil, err
 		}
-		result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+		// 开启连续准入限额时由 Redis 原子仲裁；N=0 保留原有快抢前的续聊优先判断。
+		var result *AcquireResult
+		if s.OpenAIContinuationBurstLimit() > 0 || (stickyHit && continuationEligible) || !s.hasContinuationWaiters(ctx, account.ID) {
+			result, err = s.tryAcquireAccountSlotForAdmission(ctx, account.ID, account.Concurrency, stickyHit && continuationEligible)
+		}
 		if err == nil && result != nil && result.Acquired {
-			selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
+			selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result)
 			return markStickySessionHit(selection, stickyHit), selectErr
 		}
 		if stickyAccountID > 0 && stickyAccountID == account.ID && s.concurrencyService != nil {
-			waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, account.ID)
-			if waitingCount < cfg.StickySessionMaxWaiting {
-				selection, selectErr := s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-					AccountID:      account.ID,
-					MaxConcurrency: account.Concurrency,
-					Timeout:        cfg.StickySessionWaitTimeout,
-					MaxWaiting:     cfg.StickySessionMaxWaiting,
-				})
+			if s.stickyWaitQueueHasRoom(ctx, account.ID, continuationEligible) {
+				selection, selectErr := s.newSelectionResult(ctx, account, false, nil, stickyWaitPlanFor(cfg, account, continuationEligible))
 				return markStickySessionHit(selection, stickyHit), selectErr
 			}
 		}
@@ -1166,6 +1165,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			MaxConcurrency: account.Concurrency,
 			Timeout:        cfg.FallbackWaitTimeout,
 			MaxWaiting:     cfg.FallbackMaxWaiting,
+			Class:          AccountWaitClassNewSession,
 		})
 		return markStickySessionHit(selection, stickyHit), selectErr
 	}
@@ -1214,9 +1214,13 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					} else if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else {
-						result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+						var result *AcquireResult
+						var err error
+						if s.OpenAIContinuationBurstLimit() > 0 || continuationEligible || !s.hasContinuationWaiters(ctx, accountID) {
+							result, err = s.tryAcquireAccountSlotForAdmission(ctx, accountID, account.Concurrency, continuationEligible)
+						}
 						if err == nil && result != nil && result.Acquired {
-							selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
+							selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result)
 							if selectErr != nil {
 								return nil, selectErr
 							}
@@ -1224,14 +1228,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 							return markStickySessionHit(selection, true), nil
 						}
 
-						waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
-						if waitingCount < cfg.StickySessionMaxWaiting {
-							selection, selectErr := s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-								AccountID:      accountID,
-								MaxConcurrency: account.Concurrency,
-								Timeout:        cfg.StickySessionWaitTimeout,
-								MaxWaiting:     cfg.StickySessionMaxWaiting,
-							})
+						if s.stickyWaitQueueHasRoom(ctx, accountID, continuationEligible) {
+							selection, selectErr := s.newSelectionResult(ctx, account, false, nil, stickyWaitPlanFor(cfg, account, continuationEligible))
 							return markStickySessionHit(selection, true), selectErr
 						}
 						stickySpillover = true
@@ -1311,7 +1309,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			if loadInfo == nil {
 				loadInfo = &AccountLoadInfo{AccountID: acc.ID}
 			}
-			if loadInfo.LoadRate < 100 {
+			if loadInfo.LoadRate < 100 && (s.OpenAIContinuationBurstLimit() > 0 || loadInfo.ContinuationWaiting == 0) {
 				available = append(available, accountWithLoad{
 					account:  acc,
 					loadInfo: loadInfo,
@@ -1382,14 +1380,14 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			}
 			result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
 			if err == nil && result != nil && result.Acquired {
-				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc)
+				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result)
 				if selectErr != nil {
 					return nil, true, selectErr
 				}
 				if sessionHash != "" && !stickySpillover && !gatewayProfitControlGateActive(ctx) {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
-				return selection, true, nil
+				return markStickyBindingPreserved(selection, stickySpillover), true, nil
 			}
 		}
 		return nil, true, nil
@@ -1421,14 +1419,14 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			}
 			result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
 			if err == nil && result != nil && result.Acquired {
-				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc)
+				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result)
 				if selectErr != nil {
 					return nil, selectErr
 				}
 				if sessionHash != "" && !stickySpillover && !gatewayProfitControlGateActive(ctx) {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
-				return selection, nil
+				return markStickyBindingPreserved(selection, stickySpillover), nil
 			}
 		}
 	} else {
@@ -1469,12 +1467,14 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel, requireCompact) {
 			continue
 		}
-		return s.newSelectionResult(ctx, fresh, false, nil, &AccountWaitPlan{
+		selection, selectErr := s.newSelectionResult(ctx, fresh, false, nil, &AccountWaitPlan{
 			AccountID:      fresh.ID,
 			MaxConcurrency: fresh.Concurrency,
 			Timeout:        cfg.FallbackWaitTimeout,
 			MaxWaiting:     cfg.FallbackMaxWaiting,
+			Class:          AccountWaitClassNewSession,
 		})
+		return markStickyBindingPreserved(selection, stickySpillover), selectErr
 	}
 
 	if requireCompact && baseCandidateCount > 0 {
@@ -1516,10 +1516,21 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 }
 
 func (s *OpenAIGatewayService) tryAcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
+	return s.tryAcquireAccountSlotForAdmission(ctx, accountID, maxConcurrency, false)
+}
+
+func (s *OpenAIGatewayService) tryAcquireAccountSlotForAdmission(ctx context.Context, accountID int64, maxConcurrency int, continuation bool) (*AcquireResult, error) {
 	if s.concurrencyService == nil {
 		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
 	}
-	return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
+	if s.OpenAIContinuationBurstLimit() == 0 {
+		return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
+	}
+	class := AccountWaitClassNewSession
+	if continuation {
+		class = AccountWaitClassContinuation
+	}
+	return s.concurrencyService.AcquireAccountSlotForClass(ctx, accountID, maxConcurrency, class, s.OpenAIContinuationBurstLimit())
 }
 
 func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability) *Account {
@@ -1733,12 +1744,16 @@ func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *
 	}), nil
 }
 
-func (s *OpenAIGatewayService) newAcquiredSelectionResult(ctx context.Context, account *Account, release func()) (*AccountSelectionResult, error) {
-	selection, err := s.newSelectionResult(ctx, account, true, release, nil)
-	if err != nil && release != nil {
-		release()
+func (s *OpenAIGatewayService) newAcquiredSelectionResult(ctx context.Context, account *Account, result *AcquireResult) (*AccountSelectionResult, error) {
+	selection, err := s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil)
+	if err != nil {
+		if result.ReleaseFunc != nil {
+			result.ReleaseFunc()
+		}
+		return nil, err
 	}
-	return selection, err
+	selection.ReuseFunc = result.ReuseFunc
+	return selection, nil
 }
 
 // markStickySessionHit 在选号结果上记录账号是否来自会话粘性命中。
@@ -1749,11 +1764,65 @@ func markStickySessionHit(selection *AccountSelectionResult, hit bool) *AccountS
 	return selection
 }
 
+// markStickyBindingPreserved 在选号结果上记录本次选号是否保留了已有绑定。
+func markStickyBindingPreserved(selection *AccountSelectionResult, preserved bool) *AccountSelectionResult {
+	if selection != nil && preserved {
+		selection.stickyBindingPreserved = true
+	}
+	return selection
+}
+
+// hasContinuationWaiters 读账号的续聊等待数；读失败按无等待处理，不阻塞选号。
+func (s *OpenAIGatewayService) hasContinuationWaiters(ctx context.Context, accountID int64) bool {
+	if s == nil || s.concurrencyService == nil || accountID <= 0 {
+		return false
+	}
+	waiting, err := s.concurrencyService.GetAccountContinuationWaitingCount(ctx, accountID)
+	return err == nil && waiting > 0
+}
+
+// stickyWaitPlanFor 按请求的续聊资格给粘性 / previous_response 路径构造等待计划。
+// 类别、计数键、上限、超时四者必须一致：不合格的请求（回退种子哈希）虽然命中了共享绑定，
+// 也按新会话走旧键与兜底参数，不能只把 Class 标成新会话却沿用续聊的容量与超时。
+func stickyWaitPlanFor(cfg config.GatewaySchedulingConfig, account *Account, eligible bool) *AccountWaitPlan {
+	if eligible {
+		return &AccountWaitPlan{
+			AccountID:      account.ID,
+			MaxConcurrency: account.Concurrency,
+			Timeout:        cfg.StickySessionWaitTimeout,
+			MaxWaiting:     cfg.ContinuationMaxWaiting,
+			Class:          AccountWaitClassContinuation,
+		}
+	}
+	return &AccountWaitPlan{
+		AccountID:      account.ID,
+		MaxConcurrency: account.Concurrency,
+		Timeout:        cfg.FallbackWaitTimeout,
+		MaxWaiting:     cfg.FallbackMaxWaiting,
+		Class:          AccountWaitClassNewSession,
+	}
+}
+
+// stickyWaitQueueHasRoom 检查粘性分流阈值及实际队列容量；读失败交给 handler 入队时再判。
+func (s *OpenAIGatewayService) stickyWaitQueueHasRoom(ctx context.Context, accountID int64, eligible bool) bool {
+	if s == nil || s.concurrencyService == nil {
+		return true
+	}
+	cfg := s.schedulingConfig()
+	if eligible {
+		waiting, err := s.concurrencyService.GetAccountContinuationWaitingCount(ctx, accountID)
+		return err != nil || waiting < min(cfg.StickySessionMaxWaiting, cfg.ContinuationMaxWaiting)
+	}
+	waiting, err := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
+	return err != nil || waiting < cfg.FallbackMaxWaiting
+}
+
 func (s *OpenAIGatewayService) schedulingConfig() config.GatewaySchedulingConfig {
 	if s.cfg != nil {
 		return s.cfg.Gateway.Scheduling
 	}
 	return config.GatewaySchedulingConfig{
+		ContinuationMaxWaiting:   100,
 		StickySessionMaxWaiting:  3,
 		StickySessionWaitTimeout: 45 * time.Second,
 		FallbackWaitTimeout:      30 * time.Second,

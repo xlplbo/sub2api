@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +30,29 @@ type openAIWSAccountWaitSession struct {
 	requests chan []byte
 	finished chan struct{}
 	cancel   chan context.CancelCauseFunc
+	handler  *OpenAIGatewayHandler
+	server   *httptest.Server
+	upstream *httptest.Server
+	groupID  int64
+	// gate 非空时上游在收到请求后阻塞到它关闭，用来让一个请求持续占住槽位。
+	gate chan struct{}
+	// failUpstream 为真时上游对所有请求回 502，用来制造错误轮与 failover。
+	failUpstream atomic.Bool
+}
+
+type openAIWSSessionOptions struct {
+	mode          string
+	timeout       time.Duration
+	holdSeconds   int
+	burstLimit    int
+	waitingLimit  int
+	bindings      service.GatewayCache
+	concurrency   service.ConcurrencyCache
+	extraAccounts []service.Account
+	dialHeader    http.Header
+	skipDial      bool
+	// loadBatch 打开负载批量选号（生产默认开启）；关闭时非高级调度走无溢出语义的快路径。
+	loadBatch bool
 }
 
 func TestOpenAIWSAccountWait_ExitReleasesResources(t *testing.T) {
@@ -41,19 +66,26 @@ func TestOpenAIWSAccountWait_ExitReleasesResources(t *testing.T) {
 					if later {
 						completeOpenAIWSAccountWaitTurn(t, ctx, f)
 					}
+					// 续聊轮（later=true）固定走续聊类，按 wait:account:cont 计数；首轮仍走旧键。
+					incrementWaitCount := f.cache.IncrementAccountWaitCount
+					getWaitingCount := f.cache.GetAccountWaitingCount
+					if later {
+						incrementWaitCount = f.cache.IncrementAccountContinuationWaitCount
+						getWaitingCount = f.cache.GetAccountContinuationWaitingCount
+					}
 					ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
 					require.NoError(t, err)
 					require.True(t, ok)
 					if reason == "queue_full" {
 						for range 2 {
-							ok, err = f.cache.IncrementAccountWaitCount(ctx, 801, 2)
+							ok, err = incrementWaitCount(ctx, 801, 2)
 							require.NoError(t, err)
 							require.True(t, ok)
 						}
 					}
 					require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"blocked"}`)))
 					if strings.Contains(reason, "disconnect") {
-						require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond)
+						require.Eventually(t, func() bool { n, _ := getWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond)
 						if reason == "early_frame_disconnect" {
 							require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"early"}`)))
 						}
@@ -67,7 +99,7 @@ func TestOpenAIWSAccountWait_ExitReleasesResources(t *testing.T) {
 					case <-ctx.Done():
 						t.Fatal("handler did not clean up")
 					}
-					waiting, err := f.cache.GetAccountWaitingCount(ctx, 801)
+					waiting, err := getWaitingCount(ctx, 801)
 					require.NoError(t, err)
 					if reason == "queue_full" {
 						require.Equal(t, 2, waiting)
@@ -261,11 +293,16 @@ func TestOpenAIWSAccountWait_LeaseLossReleasesResources(t *testing.T) {
 				if later {
 					completeOpenAIWSAccountWaitTurn(t, ctx, f)
 				}
+				// 续聊轮（later=true）固定走续聊类，按 wait:account:cont 计数；首轮仍走旧键。
+				getWaitingCount := f.cache.GetAccountWaitingCount
+				if later {
+					getWaitingCount = f.cache.GetAccountContinuationWaitingCount
+				}
 				ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
 				require.NoError(t, err)
 				require.True(t, ok)
 				require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"waiting"}`)))
-				require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond)
+				require.Eventually(t, func() bool { n, _ := getWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond)
 				(<-f.cancel)(service.ErrOpenAIWSIngressLeaseLost)
 				_, _, err = f.conn.Read(ctx)
 				require.Equal(t, coderws.StatusTryAgainLater, coderws.CloseStatus(err))
@@ -275,7 +312,7 @@ func TestOpenAIWSAccountWait_LeaseLossReleasesResources(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatal("handler did not clean up")
 				}
-				n, err := f.cache.GetAccountWaitingCount(ctx, 801)
+				n, err := getWaitingCount(ctx, 801)
 				require.NoError(t, err)
 				require.Zero(t, n)
 				n, err = f.cache.GetUserConcurrency(ctx, 1702)
@@ -292,12 +329,36 @@ func TestOpenAIWSAccountWait_LeaseLossReleasesResources(t *testing.T) {
 
 func newOpenAIWSAccountWaitSession(t *testing.T, mode string, timeout time.Duration) *openAIWSAccountWaitSession {
 	t.Helper()
+	return newOpenAIWSAccountWaitSessionWithHold(t, mode, timeout, 0)
+}
+
+func newOpenAIWSAccountWaitSessionWithHold(t *testing.T, mode string, timeout time.Duration, holdSeconds int) *openAIWSAccountWaitSession {
+	t.Helper()
+	return newOpenAIWSAccountWaitSessionWithDeps(t, mode, timeout, holdSeconds, nil, nil)
+}
+
+// newOpenAIWSAccountWaitSessionWithDeps 允许多个会话共用同一份粘性绑定与并发缓存，模拟独立连接命中同一绑定。
+func newOpenAIWSAccountWaitSessionWithDeps(t *testing.T, mode string, timeout time.Duration, holdSeconds int, bindings service.GatewayCache, concurrencyCache service.ConcurrencyCache) *openAIWSAccountWaitSession {
+	t.Helper()
+	return newOpenAIWSSessionWithOptions(t, openAIWSSessionOptions{mode: mode, timeout: timeout, holdSeconds: holdSeconds, bindings: bindings, concurrency: concurrencyCache})
+}
+
+func newOpenAIWSSessionWithOptions(t *testing.T, opts openAIWSSessionOptions) *openAIWSAccountWaitSession {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
-	f := &openAIWSAccountWaitSession{requests: make(chan []byte, 8), finished: make(chan struct{}), cancel: make(chan context.CancelCauseFunc, 1)}
+	mode, timeout, holdSeconds, bindings, concurrencyCache := opts.mode, opts.timeout, opts.holdSeconds, opts.bindings, opts.concurrency
+	f := &openAIWSAccountWaitSession{requests: make(chan []byte, 32), finished: make(chan struct{}), cancel: make(chan context.CancelCauseFunc, 1), groupID: 4202}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if f.failUpstream.Load() {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
 		if r.Method == http.MethodPost {
 			body, _ := io.ReadAll(r.Body)
 			f.requests <- body
+			if f.gate != nil {
+				<-f.gate
+			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = fmt.Fprint(w, "data: "+accountWaitCompleted+"\n\n")
 			return
@@ -313,18 +374,32 @@ func newOpenAIWSAccountWaitSession(t *testing.T, mode string, timeout time.Durat
 				return
 			}
 			f.requests <- body
+			if f.gate != nil {
+				<-f.gate
+			}
 			if conn.Write(r.Context(), coderws.MessageText, []byte(accountWaitCompleted)) != nil {
 				return
 			}
 		}
 	}))
 	t.Cleanup(upstream.Close)
-	repo := &openAIWSTurnBudgetAccountRepo{accounts: []service.Account{{
+	f.upstream = upstream
+	accounts := []service.Account{{
 		ID: 801, Name: "account-wait", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
 		Status: service.StatusActive, Schedulable: true, Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": upstream.URL},
 		Extra:       map[string]any{"openai_apikey_responses_websockets_v2_enabled": true, "openai_apikey_responses_websockets_v2_mode": mode},
-	}}}
+	}}
+	for _, extra := range opts.extraAccounts {
+		if extra.Credentials == nil {
+			extra.Credentials = map[string]any{"api_key": "sk-test", "base_url": upstream.URL}
+		}
+		if extra.Extra == nil {
+			extra.Extra = map[string]any{"openai_apikey_responses_websockets_v2_enabled": true, "openai_apikey_responses_websockets_v2_mode": mode}
+		}
+		accounts = append(accounts, extra)
+	}
+	repo := &openAIWSTurnBudgetAccountRepo{accounts: accounts}
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	cfg.Default.RateMultiplier = 1
 	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
@@ -339,17 +414,28 @@ func newOpenAIWSAccountWaitSession(t *testing.T, mode string, timeout time.Durat
 	cfg.Gateway.Scheduling.StickySessionWaitTimeout = timeout
 	cfg.Gateway.Scheduling.FallbackWaitTimeout = timeout
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 2
+	cfg.Gateway.Scheduling.ContinuationMaxWaiting = 2
+	if opts.waitingLimit > 0 {
+		cfg.Gateway.Scheduling.ContinuationMaxWaiting = opts.waitingLimit
+	}
 	cfg.Gateway.Scheduling.FallbackMaxWaiting = 2
-	f.cache = testutil.NewTestConcurrencyCache(t)
+	cfg.Gateway.OpenAIWS.TurnSlotHoldSeconds = holdSeconds
+	cfg.Gateway.Scheduling.ContinuationBurstLimit = opts.burstLimit
+	cfg.Gateway.Scheduling.LoadBatchEnabled = opts.loadBatch
+	f.cache = concurrencyCache
+	if f.cache == nil {
+		f.cache = testutil.NewTestConcurrencyCache(t)
+	}
 	concurrency := service.NewConcurrencyService(f.cache)
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
-	gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, concurrency,
+	gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, bindings, cfg, nil, concurrency,
 		service.NewBillingService(cfg, nil), nil, billing, openAIWSTurnBudgetHTTPClient{}, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
 	t.Cleanup(gateway.CloseOpenAIWSPool)
 	h := NewOpenAIGatewayHandler(gateway, concurrency, billing, &service.APIKeyService{}, nil, nil, nil, nil, cfg)
-	groupID := int64(4202)
-	apiKey := &service.APIKey{ID: 1802, GroupID: &groupID, User: &service.User{ID: 1702, Status: service.StatusActive}, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive}}
+	f.handler = h
+	groupID := f.groupID
+	apiKey := &service.APIKey{ID: 1802, GroupID: &groupID, User: &service.User{ID: 1702, Status: service.StatusActive}, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, AllowMessagesDispatch: true}}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
@@ -364,12 +450,20 @@ func newOpenAIWSAccountWaitSession(t *testing.T, mode string, timeout time.Durat
 		c.Request = c.Request.WithContext(ctx)
 		h.ResponsesWebSocket(c)
 	})
+	router.POST("/v1/responses", h.Responses)
+	router.POST("/v1/chat/completions", h.ChatCompletions)
+	router.POST("/v1/messages", h.Messages)
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
+	f.server = server
+	if opts.skipDial {
+		close(f.finished)
+		return f
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	var err error
-	f.conn, _, err = coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", nil)
+	f.conn, _, err = coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", &coderws.DialOptions{HTTPHeader: opts.dialHeader})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = f.conn.CloseNow()
@@ -393,6 +487,124 @@ func completeOpenAIWSAccountWaitTurn(t *testing.T, ctx context.Context, f *openA
 	require.Eventually(t, func() bool { n, _ := f.cache.GetAccountConcurrency(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
 }
 
+type openAIWSStickyBindings struct {
+	service.GatewayCache
+	mu        sync.Mutex
+	accounts  map[string]int64
+	refreshes int
+}
+
+// snapshot 返回当前全部绑定的副本，键是服务层传入的缓存键。
+func (b *openAIWSStickyBindings) snapshot() map[string]int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make(map[string]int64, len(b.accounts))
+	for k, v := range b.accounts {
+		out[k] = v
+	}
+	return out
+}
+
+func (b *openAIWSStickyBindings) refreshCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.refreshes
+}
+
+func (b *openAIWSStickyBindings) GetSessionAccountID(_ context.Context, _ int64, sessionHash string) (int64, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if id, ok := b.accounts[sessionHash]; ok {
+		return id, nil
+	}
+	return 0, service.ErrStickySessionNotFound
+}
+
+func (b *openAIWSStickyBindings) SetSessionAccountID(_ context.Context, _ int64, sessionHash string, accountID int64, _ time.Duration) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.accounts == nil {
+		b.accounts = make(map[string]int64)
+	}
+	b.accounts[sessionHash] = accountID
+	return nil
+}
+
+func (b *openAIWSStickyBindings) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refreshes++
+	return nil
+}
+
+func (b *openAIWSStickyBindings) DeleteSessionAccountID(_ context.Context, _ int64, sessionHash string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.accounts, sessionHash)
+	return nil
+}
+
+func (b *openAIWSStickyBindings) count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.accounts)
+}
+
+func TestOpenAIWSFirstFrameContinuationEligibilityNeedsExplicitSession(t *testing.T) {
+	svc := &service.OpenAIGatewayService{}
+	newCtx := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		return c
+	}
+	content := []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)
+	require.NotEmpty(t, svc.GenerateSessionHash(newCtx(), content), "只有 model 与 input 的首帧也会走内容回退得到非空哈希")
+	require.Empty(t, svc.ExtractSessionID(newCtx(), content), "内容回退哈希不是显式会话标识")
+	withKey := []byte(`{"type":"response.create","model":"gpt-5.1","input":"first","prompt_cache_key":"pck-1"}`)
+	require.Equal(t, "pck-1", svc.ExtractSessionID(newCtx(), withKey))
+	withHeader := newCtx()
+	withHeader.Request.Header.Set("session_id", "sess-1")
+	require.Equal(t, "sess-1", svc.ExtractSessionID(withHeader, content))
+}
+
+func TestOpenAIWSAccountWait_ContentHashBindingYieldsToContinuationWaiters(t *testing.T) {
+	bindings := &openAIWSStickyBindings{}
+	first := newOpenAIWSAccountWaitSessionWithDeps(t, service.OpenAIWSIngressModeCtxPool, 250*time.Millisecond, 0, bindings, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	completeOpenAIWSAccountWaitTurn(t, ctx, first)
+	require.NotZero(t, bindings.count(), "无显式会话标识的首帧按内容回退哈希写入了共享绑定")
+	require.NoError(t, first.conn.Close(coderws.StatusNormalClosure, ""))
+	select {
+	case <-first.finished:
+	case <-ctx.Done():
+		t.Fatal("first handler did not exit")
+	}
+
+	ok, err := first.cache.IncrementAccountContinuationWaitCount(ctx, 801, 3)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	second := newOpenAIWSAccountWaitSessionWithDeps(t, service.OpenAIWSIngressModeCtxPool, 250*time.Millisecond, 0, bindings, first.cache)
+	require.NoError(t, second.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
+	_, _, err = second.conn.Read(ctx)
+	require.Equal(t, coderws.StatusTryAgainLater, coderws.CloseStatus(err), "同内容的独立连接命中共享绑定时不是续聊，有续聊等待者必须让出而不是抢到空槽")
+	select {
+	case <-second.requests:
+		t.Fatal("request from a content-hash binding jumped the continuation queue")
+	default:
+	}
+}
+
+func completeOpenAIWSTurnKeepingSlot(t *testing.T, ctx context.Context, f *openAIWSAccountWaitSession, input string) {
+	t.Helper()
+	require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"`+input+`"}`)))
+	_, body, err := f.conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(body, "type").String())
+	<-f.requests
+}
+
 func TestOpenAIWSAccountWait_ReleaseContinuesSameConnection(t *testing.T) {
 	for _, mode := range []string{service.OpenAIWSIngressModeCtxPool, service.OpenAIWSIngressModeHTTPBridge, service.OpenAIWSIngressModePassthrough} {
 		for _, later := range []bool{false, true} {
@@ -403,11 +615,16 @@ func TestOpenAIWSAccountWait_ReleaseContinuesSameConnection(t *testing.T) {
 				if later {
 					completeOpenAIWSAccountWaitTurn(t, ctx, f)
 				}
+				// 续聊轮（later=true）固定走续聊类，按 wait:account:cont 计数；首轮仍走旧键。
+				getWaitingCount := f.cache.GetAccountWaitingCount
+				if later {
+					getWaitingCount = f.cache.GetAccountContinuationWaitingCount
+				}
 				acquired, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other-request")
 				require.NoError(t, err)
 				require.True(t, acquired)
 				require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"waiting"}`)))
-				require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond, "request should wait without closing")
+				require.Eventually(t, func() bool { n, _ := getWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond, "request should wait without closing")
 				select {
 				case <-f.requests:
 					t.Fatal("upstream called before account admission")
@@ -423,8 +640,93 @@ func TestOpenAIWSAccountWait_ReleaseContinuesSameConnection(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatal("upstream request missing")
 				}
-				require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
+				require.Eventually(t, func() bool { n, _ := getWaitingCount(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
 			})
 		}
 	}
+}
+
+func TestOpenAIWSAccountWait_ContinuationQueueIgnoresLegacyWaiters(t *testing.T) {
+	f := newOpenAIWSAccountWaitSession(t, service.OpenAIWSIngressModeCtxPool, 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	completeOpenAIWSAccountWaitTurn(t, ctx, f)
+
+	ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
+	require.NoError(t, err)
+	require.True(t, ok)
+	for range 2 {
+		ok, err = f.cache.IncrementAccountWaitCount(ctx, 801, 2)
+		require.NoError(t, err)
+		require.True(t, ok)
+	}
+
+	require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"second"}`)))
+	require.Eventually(t, func() bool { n, _ := f.cache.GetAccountContinuationWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond, "后续轮按续聊类入队，不被旧键上的 2 个等待者挡住")
+	select {
+	case <-f.requests:
+		t.Fatal("等待期间不得有上游请求")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	require.NoError(t, f.cache.ReleaseAccountSlot(ctx, 801, "other"))
+	_, body, err := f.conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(body, "type").String())
+	<-f.requests
+	require.Eventually(t, func() bool { n, _ := f.cache.GetAccountContinuationWaitingCount(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
+}
+
+func TestOpenAIWSAccountWait_NewSessionYieldsToContinuationWaiters(t *testing.T) {
+	f := newOpenAIWSAccountWaitSession(t, service.OpenAIWSIngressModeCtxPool, 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+
+	ok, err := f.cache.AcquireAccountSlot(ctx, 801, 1, "other")
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = f.cache.IncrementAccountContinuationWaitCount(ctx, 801, 3)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
+	require.Eventually(t, func() bool { n, _ := f.cache.GetAccountWaitingCount(ctx, 801); return n == 1 }, time.Second, time.Millisecond, "首帧无会话标识的连接是新会话类，进旧键")
+
+	require.NoError(t, f.cache.ReleaseAccountSlot(ctx, 801, "other"))
+	select {
+	case <-f.requests:
+		t.Fatal("有续聊等待者时新会话不得抢到空出的槽并转发上游")
+	case <-time.After(300 * time.Millisecond):
+	}
+	n, err := f.cache.GetAccountConcurrency(ctx, 801)
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "有续聊等待者时新会话不得拿走空出的槽")
+
+	require.NoError(t, f.cache.DecrementAccountContinuationWaitCount(ctx, 801))
+	_, body, err := f.conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(body, "type").String())
+	<-f.requests
+}
+
+func TestOpenAIWSAccountWait_NewSessionYieldsAtEntryWhenSlotFree(t *testing.T) {
+	f := newOpenAIWSAccountWaitSession(t, service.OpenAIWSIngressModeCtxPool, 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	ok, err := f.cache.IncrementAccountContinuationWaitCount(ctx, 801, 3)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
+	time.Sleep(400 * time.Millisecond)
+	n, err := f.cache.GetAccountConcurrency(ctx, 801)
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "账号有空槽但有续聊等待者，新会话在入口也不得快抢")
+	require.Eventually(t, func() bool { c, _ := f.cache.GetAccountWaitingCount(ctx, 801); return c == 1 }, time.Second, time.Millisecond, "进旧键排队")
+
+	require.NoError(t, f.cache.DecrementAccountContinuationWaitCount(ctx, 801))
+	_, body, err := f.conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(body, "type").String())
+	<-f.requests
 }
