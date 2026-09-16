@@ -2944,6 +2944,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if turn == 1 {
 					return nil
 				}
+				if err := h.gatewayService.RefreshStickySessionTTL(ctx, apiKey.GroupID, sessionHash); err != nil {
+					reqLog.Debug("openai.websocket_sticky_session_refresh_failed", zap.Int("turn", turn), zap.Error(err))
+				}
 				// 防御式清理只放用户槽与仍在使用中的账号槽；挂起槽留给下面取回。
 				releaseUserSlot()
 				releaseActiveAccountSlot()

@@ -187,6 +187,15 @@ func (s *OpenAIGatewayService) setStickySessionAccountID(ctx context.Context, gr
 	return nil
 }
 
+// RefreshStickySessionTTL 供 WS 后续轮刷新会话绑定：长连接每轮不经过调度器，不刷新则连续活跃
+// 超过 TTL 的连接断线重连会被当成新会话。
+func (s *OpenAIGatewayService) RefreshStickySessionTTL(ctx context.Context, groupID *int64, sessionHash string) error {
+	if strings.TrimSpace(sessionHash) == "" {
+		return nil
+	}
+	return s.refreshStickySessionTTL(ctx, groupID, sessionHash, s.openAIWSSessionStickyTTL())
+}
+
 func (s *OpenAIGatewayService) refreshStickySessionTTL(ctx context.Context, groupID *int64, sessionHash string, ttl time.Duration) error {
 	if s == nil || s.cache == nil {
 		return nil

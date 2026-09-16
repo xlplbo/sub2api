@@ -157,8 +157,9 @@ func (c schedulerTestConcurrencyCache) GetAccountContinuationWaitingCount(ctx co
 }
 
 type schedulerTestGatewayCache struct {
-	sessionBindings map[string]int64
-	deletedSessions map[string]int
+	sessionBindings   map[string]int64
+	deletedSessions   map[string]int
+	refreshedSessions map[string]int
 }
 
 func (c *schedulerTestGatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
@@ -177,6 +178,10 @@ func (c *schedulerTestGatewayCache) SetSessionAccountID(ctx context.Context, gro
 }
 
 func (c *schedulerTestGatewayCache) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
+	if c.refreshedSessions == nil {
+		c.refreshedSessions = make(map[string]int)
+	}
+	c.refreshedSessions[sessionHash]++
 	return nil
 }
 
