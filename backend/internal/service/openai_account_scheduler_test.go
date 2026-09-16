@@ -4069,6 +4069,79 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_HTTPDefaultStillEscapes
 	require.Equal(t, int64(21001), cache.sessionBindings["openai:session_hash_http_escape"])
 }
 
+func newStickyBindPreservedSchedulerFixture(stickyModelMapping bool) (int64, []Account, *config.Config) {
+	groupID := int64(10120)
+	sticky := Account{
+		ID:          21201,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		GroupIDs:    []int64{groupID},
+	}
+	if stickyModelMapping {
+		sticky.Credentials = map[string]any{"model_mapping": map[string]any{"gpt-4o": "gpt-4o"}}
+	}
+	other := Account{
+		ID:          21202,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    9,
+		GroupIDs:    []int64{groupID},
+	}
+	return groupID, []Account{sticky, other}, newSchedulerTestOpenAIWSV2Config()
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_IncompatibleStickyDoesNotPreserveBinding(t *testing.T) {
+	groupID, accounts, cfg := newStickyBindPreservedSchedulerFixture(true)
+	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_incompatible": 21201}}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerGroupAwareOpenAIAccountRepo{schedulerTestOpenAIAccountRepo{accounts: accounts}},
+		cache:              cache,
+		cfg:                cfg,
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{acquireResults: map[int64]bool{21201: true, 21202: true}}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "session_hash_incompatible", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.True(t, selection.Acquired)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+	require.Equal(t, int64(21202), selection.Account.ID, "绑定账号不支持本次模型，跳过后选中别的账号")
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.False(t, decision.StickyBindingPreserved, "跳过不兼容绑定不是保留绑定的选号，准入后必须能改写绑定")
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_EscapedStickyPreservesBinding(t *testing.T) {
+	groupID, accounts, cfg := newStickyBindPreservedSchedulerFixture(false)
+	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_escaped": 21201}}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerGroupAwareOpenAIAccountRepo{schedulerTestOpenAIAccountRepo{accounts: accounts}},
+		cache:              cache,
+		cfg:                cfg,
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{acquireResults: map[int64]bool{21201: false, 21202: true}}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "session_hash_escaped", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.True(t, selection.Acquired)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+	require.Equal(t, int64(21202), selection.Account.ID, "粘性账号满槽后逃逸到别的账号")
+	require.True(t, decision.StickyBindingPreserved, "逃逸保留绑定，准入后不得改写")
+}
+
 func TestTryFallbackToWeightedSticky_WaitPlanFollowsRequestEligibility(t *testing.T) {
 	groupID := int64(10110)
 	accounts := []Account{

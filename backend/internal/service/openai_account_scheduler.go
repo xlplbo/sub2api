@@ -100,15 +100,18 @@ type OpenAIAccountScheduleRequest struct {
 }
 
 type OpenAIAccountScheduleDecision struct {
-	Layer               string
-	StickyPreviousHit   bool
-	StickySessionHit    bool
-	CandidateCount      int
-	TopK                int
-	LatencyMs           int64
-	LoadSkew            float64
-	SelectedAccountID   int64
-	SelectedAccountType string
+	Layer             string
+	StickyPreviousHit bool
+	StickySessionHit  bool
+	// StickyBindingPreserved 为真表示本次选号保留了已有绑定（健康逃逸、队满溢出、
+	// guardian 父线程回退），准入后不得把绑定改写到选中的账号上。
+	StickyBindingPreserved bool
+	CandidateCount         int
+	TopK                   int
+	LatencyMs              int64
+	LoadSkew               float64
+	SelectedAccountID      int64
+	SelectedAccountType    string
 }
 
 type OpenAIAccountSchedulerMetricsSnapshot struct {
@@ -451,6 +454,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		if selection != nil && selection.Account != nil {
 			decision.Layer = openAIAccountScheduleLayerGuardianParent
 			decision.StickySessionHit = true
+			decision.StickyBindingPreserved = true
 			decision.SelectedAccountID = selection.Account.ID
 			decision.SelectedAccountType = selection.Account.Type
 			return selection, decision, nil
@@ -471,6 +475,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		}
 		if escapedSticky {
 			req.PreserveStickyBinding = true
+			decision.StickyBindingPreserved = true
 		}
 	}
 
@@ -2253,6 +2258,7 @@ func applyLegacySelectionDecision(decision *OpenAIAccountScheduleDecision, selec
 	}
 	decision.SelectedAccountID = selection.Account.ID
 	decision.SelectedAccountType = selection.Account.Type
+	decision.StickyBindingPreserved = selection.stickyBindingPreserved
 	if selection.stickySessionHit {
 		decision.Layer = openAIAccountScheduleLayerSessionSticky
 		decision.StickySessionHit = true
@@ -2384,6 +2390,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 			if selection != nil && selection.Account != nil {
 				decision.Layer = openAIAccountScheduleLayerGuardianParent
 				decision.StickySessionHit = true
+				decision.StickyBindingPreserved = true
 				decision.SelectedAccountID = selection.Account.ID
 				decision.SelectedAccountType = selection.Account.Type
 				return selection, decision, nil

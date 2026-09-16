@@ -608,6 +608,9 @@ type AccountSelectionResult struct {
 	WaitPlan    *AccountWaitPlan // nil means no wait allowed
 	// stickySessionHit 标记账号来自会话粘性绑定命中，供非高级调度路径回填决策标签。
 	stickySessionHit bool
+	// stickyBindingPreserved 标记本次选号保留了已有绑定（粘性账号队满溢出），
+	// 供非高级调度路径回填决策标签，准入后据此不改写绑定。
+	stickyBindingPreserved bool
 	// profitGate 携带本次选号真实生效的利润门（无门为 nil）。门安装在调度栈的
 	// 局部 ctx 上，handler 必须经 ContextWithSelectionProfitGate 重放后才能在
 	// 调度栈之外做抢槽后终检与准入后粘性绑定。

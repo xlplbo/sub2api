@@ -359,3 +359,25 @@ func TestLegacySchedulerDecision_PriorityLRUNewSessionYieldsToContinuationWaiter
 	require.Equal(t, AccountWaitClassNewSession, selection.WaitPlan.Class)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }
+
+func TestLegacySchedulerDecision_StickySpilloverReportsPreservedBinding(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	ctx := context.Background()
+	groupID := int64(38100)
+	svc := newLegacySchedulerDecisionTestService(newLegacySchedulerDecisionTestAccounts(groupID, true), true, schedulerTestConcurrencyCache{
+		acquireResults: map[int64]bool{38102: false, 38101: true},
+		contWaitCounts: map[int64]int{38102: 3},
+	})
+	sessionHash := "legacy-sticky-spillover"
+	require.NoError(t, svc.setStickySessionAccountID(ctx, &groupID, sessionHash, 38102, time.Hour))
+
+	selection, decision, err := svc.SelectAccountWithSchedulerForCapability(
+		ctx, &groupID, "", sessionHash, "gpt-5.1", nil,
+		OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false, true,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	releaseLegacySchedulerDecisionSelection(selection)
+	require.Equal(t, int64(38101), selection.Account.ID, "续聊队列满时溢出到负载层")
+	require.True(t, decision.StickyBindingPreserved, "溢出保留绑定，准入后不得改写")
+}

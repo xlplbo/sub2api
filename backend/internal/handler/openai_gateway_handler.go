@@ -2569,6 +2569,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
 	admissionAfterFailover := false
+	profitVetoReselect := false
 	firstOutputTimeoutSwitchCount := 0
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
@@ -2730,6 +2731,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
 					return
 				}
+				profitVetoReselect = true
 				continue
 			}
 			account = latest
@@ -2759,6 +2761,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
 					return
 				}
+				profitVetoReselect = true
 				continue
 			}
 			account = latest
@@ -2788,11 +2791,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 		currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
 		currentAccountRefresh = accountRefreshFunc
-		bindPolicy := service.StickyBindPolicyPreserve
-		if admissionAfterFailover {
-			bindPolicy = service.StickyBindPolicyMigrate
-		}
+		bindPolicy := openAIWSStickyBindPolicyFor(admissionAfterFailover, profitVetoReselect, scheduleDecision)
 		admissionAfterFailover = false
+		profitVetoReselect = false
 		if err := h.gatewayService.BindStickySessionAfterAdmissionWithPolicy(ctx, apiKey.GroupID, sessionHash, account.ID, bindPolicy); err != nil {
 			reqLog.Warn("openai.websocket_bind_sticky_session_after_admission_failed", zap.Int64("account_id", account.ID), zap.String("policy", fmt.Sprint(bindPolicy)), zap.Error(err))
 		}

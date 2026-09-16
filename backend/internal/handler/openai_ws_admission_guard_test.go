@@ -37,6 +37,29 @@ func TestOpenAIWSFirstAdmissionNonMigratable(t *testing.T) {
 	}
 }
 
+func TestOpenAIWSStickyBindPolicyFor(t *testing.T) {
+	preserved := service.OpenAIAccountScheduleDecision{StickyBindingPreserved: true}
+	plain := service.OpenAIAccountScheduleDecision{}
+	cases := []struct {
+		name          string
+		afterFailover bool
+		profitVeto    bool
+		decision      service.OpenAIAccountScheduleDecision
+		want          service.StickyBindPolicy
+	}{
+		{"failover_migrates", true, false, plain, service.StickyBindPolicyMigrate},
+		{"failover_wins_over_preserved", true, true, preserved, service.StickyBindPolicyMigrate},
+		{"scheduler_preserved_binding", false, false, preserved, service.StickyBindPolicyPreserve},
+		{"profit_veto_reselect", false, true, plain, service.StickyBindPolicyPreserve},
+		{"plain_first_admission_is_legacy", false, false, plain, service.StickyBindPolicyLegacy},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, openAIWSStickyBindPolicyFor(tc.afterFailover, tc.profitVeto, tc.decision))
+		})
+	}
+}
+
 func TestOpenAIWSFirstAdmissionNonMigratable_SkipsLookupWhenPreconditionsFail(t *testing.T) {
 	called := false
 	lookup := func() int64 { called = true; return 801 }

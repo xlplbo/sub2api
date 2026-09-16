@@ -16,3 +16,17 @@ func openAIWSFirstAdmissionNonMigratable(switchCount int, firstFrameContinuation
 	bound := lookupBound()
 	return bound > 0 && bound != selectedAccountID
 }
+
+// openAIWSStickyBindPolicyFor 选出准入后写绑定的策略。
+// failover 换号后新账号已过终检，绑定必须跟过去（Migrate）；调度器保留了绑定的选号
+// （健康逃逸、队满溢出、guardian 父线程回退）与利润否决后的重选不改写已有异账号绑定（Preserve）；
+// 其余首次准入沿用旧行为（Legacy），避免绑定卡在被跳过的不兼容账号上。
+func openAIWSStickyBindPolicyFor(admissionAfterFailover, profitVetoReselect bool, decision service.OpenAIAccountScheduleDecision) service.StickyBindPolicy {
+	if admissionAfterFailover {
+		return service.StickyBindPolicyMigrate
+	}
+	if decision.StickyBindingPreserved || profitVetoReselect {
+		return service.StickyBindPolicyPreserve
+	}
+	return service.StickyBindPolicyLegacy
+}

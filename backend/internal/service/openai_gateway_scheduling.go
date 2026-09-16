@@ -1388,7 +1388,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if sessionHash != "" && !stickySpillover && !gatewayProfitControlGateActive(ctx) {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
-				return selection, true, nil
+				return markStickyBindingPreserved(selection, stickySpillover), true, nil
 			}
 		}
 		return nil, true, nil
@@ -1427,7 +1427,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if sessionHash != "" && !stickySpillover && !gatewayProfitControlGateActive(ctx) {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
-				return selection, nil
+				return markStickyBindingPreserved(selection, stickySpillover), nil
 			}
 		}
 	} else {
@@ -1468,13 +1468,14 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel, requireCompact) {
 			continue
 		}
-		return s.newSelectionResult(ctx, fresh, false, nil, &AccountWaitPlan{
+		selection, selectErr := s.newSelectionResult(ctx, fresh, false, nil, &AccountWaitPlan{
 			AccountID:      fresh.ID,
 			MaxConcurrency: fresh.Concurrency,
 			Timeout:        cfg.FallbackWaitTimeout,
 			MaxWaiting:     cfg.FallbackMaxWaiting,
 			Class:          AccountWaitClassNewSession,
 		})
+		return markStickyBindingPreserved(selection, stickySpillover), selectErr
 	}
 
 	if requireCompact && baseCandidateCount > 0 {
@@ -1749,6 +1750,14 @@ func (s *OpenAIGatewayService) newAcquiredSelectionResult(ctx context.Context, a
 func markStickySessionHit(selection *AccountSelectionResult, hit bool) *AccountSelectionResult {
 	if selection != nil && hit {
 		selection.stickySessionHit = true
+	}
+	return selection
+}
+
+// markStickyBindingPreserved 在选号结果上记录本次选号是否保留了已有绑定。
+func markStickyBindingPreserved(selection *AccountSelectionResult, preserved bool) *AccountSelectionResult {
+	if selection != nil && preserved {
+		selection.stickyBindingPreserved = true
 	}
 	return selection
 }
