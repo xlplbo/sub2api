@@ -157,3 +157,21 @@ func TestCleanupStaleProcessSlotsDeletesContinuationWaitKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, legacy)
 }
+
+func TestSweepLegacyWaitKeysOnceSkipsContinuationWaitKey(t *testing.T) {
+	cache, client := newContinuationWaitTestCache(t)
+	ctx := context.Background()
+
+	legacyKey := accountWaitKey(15)
+	continuationKey := accountContinuationWaitKey(16)
+	require.NoError(t, client.Set(ctx, legacyKey, 5, time.Minute).Err())
+	require.NoError(t, client.Set(ctx, continuationKey, 2, time.Minute).Err())
+
+	require.NoError(t, cache.CleanupStaleProcessSlots(ctx, "keep-"))
+
+	_, err := client.Get(ctx, legacyKey).Result()
+	require.ErrorIs(t, err, redis.Nil, "一次性清扫仍要删掉未入索引的遗留旧键")
+	waiting, err := client.Get(ctx, continuationKey).Int()
+	require.NoError(t, err, "续聊等待键是在线计数，wait:account:* 通配不得连带删除")
+	require.Equal(t, 2, waiting)
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -1291,8 +1292,17 @@ func (c *concurrencyCache) sweepLegacyWaitKeysOnce(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("scan legacy wait keys %s: %w", pattern, err)
 			}
-			if len(keys) > 0 {
-				if err := c.rdb.Del(ctx, keys...).Err(); err != nil {
+			// wait:account:cont:* 是本版本的在线续聊等待计数，被 wait:account:* 通配命中，
+			// 删掉会把在线续聊等待者清零，必须剔除。
+			stale := make([]string, 0, len(keys))
+			for _, key := range keys {
+				if strings.HasPrefix(key, accountContinuationWaitKeyPrefix) {
+					continue
+				}
+				stale = append(stale, key)
+			}
+			if len(stale) > 0 {
+				if err := c.rdb.Del(ctx, stale...).Err(); err != nil {
 					return fmt.Errorf("delete legacy wait keys: %w", err)
 				}
 			}
