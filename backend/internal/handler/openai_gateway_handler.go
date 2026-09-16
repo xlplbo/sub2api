@@ -2187,16 +2187,22 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		return nil, openAISlotAcquireFailed
 	}
 
-	fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(
+	fast, err := h.concurrencyHelper.TryAcquireAccountSlotForPlan(
 		ctx,
 		account.ID,
 		selection.WaitPlan.MaxConcurrency,
+		selection.WaitPlan.Class,
 	)
 	if err != nil {
 		reqLog.Warn("openai.account_slot_quick_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		status, errType, code, message := concurrencyErrorResponse(err, "account")
 		writeError(status, errType, code, message)
 		return nil, openAISlotAcquireFailed
+	}
+	fastAcquired := fast != nil && fast.Acquired
+	var fastReleaseFunc func()
+	if fastAcquired {
+		fastReleaseFunc = fast.ReleaseFunc
 	}
 	if fastAcquired {
 		// 分组利润控制：快速抢槽成功后终检。选号与抢槽之间账号
@@ -2217,13 +2223,14 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		return wrapReleaseOnDone(ctx, fastReleaseFunc), openAISlotAcquireOK
 	}
 
-	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
+	canWait, leaveQueue, waitErr := h.enterAccountWaitQueue(ctx, account.ID, selection.WaitPlan)
 	if waitErr != nil {
 		reqLog.Warn("openai.account_wait_counter_increment_failed", zap.Int64("account_id", account.ID), zap.Error(waitErr))
 	} else if !canWait {
 		reqLog.Info("openai.account_wait_queue_full",
 			zap.Int64("account_id", account.ID),
 			zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
+			zap.String("class", selection.WaitPlan.Class.String()),
 		)
 		writeError(http.StatusTooManyRequests, "rate_limit_error", gatewayQueueFullCode, "Too many pending requests, please retry later")
 		return nil, openAISlotAcquireFailed
@@ -2232,19 +2239,20 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 	accountWaitCounted := waitErr == nil && canWait
 	releaseWait := func() {
 		if accountWaitCounted {
-			h.concurrencyHelper.DecrementAccountWaitCount(ctx, account.ID)
+			leaveQueue()
 			accountWaitCounted = false
 		}
 	}
 	defer releaseWait()
 
-	accountReleaseFunc, err := h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
+	accountReleaseFunc, err := h.concurrencyHelper.AcquireAccountSlotWithWaitTimeoutYielding(
 		c,
 		account.ID,
 		selection.WaitPlan.MaxConcurrency,
 		selection.WaitPlan.Timeout,
 		reqStream,
 		streamStarted,
+		selection.WaitPlan.Class == service.AccountWaitClassNewSession,
 	)
 	if err != nil {
 		reqLog.Warn("openai.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))

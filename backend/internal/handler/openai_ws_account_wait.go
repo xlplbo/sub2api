@@ -73,8 +73,8 @@ func closeWSAccountAdmission(ctx context.Context, conn *coderws.Conn, err error)
 	closeOpenAIClientWS(conn, coderws.StatusGoingAway, "websocket request canceled")
 }
 
-// enterWSAccountWaitQueue 按等待计划的类别选计数键：续聊类进 wait:account:cont，其余进 wait:account。
-func (h *OpenAIGatewayHandler) enterWSAccountWaitQueue(ctx context.Context, accountID int64, plan *service.AccountWaitPlan) (bool, func(), error) {
+// enterAccountWaitQueue 按等待计划的类别选计数键：续聊类进 wait:account:cont，其余进 wait:account。WS 与 HTTP 共用。
+func (h *OpenAIGatewayHandler) enterAccountWaitQueue(ctx context.Context, accountID int64, plan *service.AccountWaitPlan) (bool, func(), error) {
 	if plan.Class == service.AccountWaitClassContinuation {
 		canWait, err := h.concurrencyHelper.IncrementAccountContinuationWaitCount(ctx, accountID, plan.MaxWaiting)
 		return canWait, func() { h.concurrencyHelper.DecrementAccountContinuationWaitCount(ctx, accountID) }, err
@@ -112,7 +112,7 @@ func (h *OpenAIGatewayHandler) acquireWSAccountSlot(ctx context.Context, account
 	if !time.Now().Before(deadline) {
 		return nil, openAIWSAccountBusyError()
 	}
-	canWait, leaveQueue, err := h.enterWSAccountWaitQueue(ctx, account.ID, plan)
+	canWait, leaveQueue, err := h.enterAccountWaitQueue(ctx, account.ID, plan)
 	if err != nil {
 		return nil, service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to enter account wait queue", err)
 	}
@@ -128,10 +128,7 @@ func (h *OpenAIGatewayHandler) acquireWSAccountSlot(ctx context.Context, account
 	started := time.Now()
 	log.Info("openai.websocket_account_wait_started", zap.Int64("account_id", account.ID), zap.String("mode", mode), zap.String("phase", phase), zap.Int("turn", budget.turn), zap.Int("max_concurrency", maxConcurrency), zap.Int("max_waiting", plan.MaxWaiting), zap.String("class", plan.Class.String()), zap.Int64("budget_ms", time.Until(deadline).Milliseconds()))
 	release, err := waitForConcurrencySlot(waitCtx, func() (*service.AcquireResult, error) {
-		if plan.Class == service.AccountWaitClassNewSession && h.concurrencyHelper.HasContinuationWaiters(waitCtx, account.ID) {
-			return &service.AcquireResult{}, nil
-		}
-		return h.concurrencyHelper.concurrencyService.AcquireAccountSlot(waitCtx, account.ID, maxConcurrency)
+		return h.concurrencyHelper.TryAcquireAccountSlotForPlan(waitCtx, account.ID, maxConcurrency, plan.Class)
 	}, nil, nil)
 	if err == nil && waitCtx.Err() != nil {
 		if release != nil {
