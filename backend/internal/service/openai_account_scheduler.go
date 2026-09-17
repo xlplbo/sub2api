@@ -1354,7 +1354,13 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
 			continue
 		}
-		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+		// 与 selectBySessionHash 同规则：不合格请求不能借共享绑定插到续聊等待者前面，有续聊在等就视同满槽。
+		yieldToContinuation := !req.ContinuationEligible && s.service.hasContinuationWaiters(ctx, account.ID)
+		var result *AcquireResult
+		var acquireErr error
+		if !yieldToContinuation {
+			result, acquireErr = s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+		}
 		if acquireErr != nil {
 			return nil, acquireErr
 		}

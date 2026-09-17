@@ -4200,6 +4200,65 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_EscapedStickyPreservesB
 	require.True(t, decision.StickyBindingPreserved, "逃逸保留绑定，准入后不得改写")
 }
 
+func TestTryFallbackToWeightedSticky_IneligibleYieldsToContinuationWaiters(t *testing.T) {
+	groupID := int64(10111)
+	accounts := []Account{
+		{
+			ID:          21102,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			GroupIDs:    []int64{groupID},
+		},
+	}
+	cfg := newSchedulerTestOpenAIWSV2Config()
+	for _, tc := range []struct {
+		name     string
+		eligible bool
+	}{
+		{"continuation acquires", true},
+		{"new session yields", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var acquired []int64
+			svc := &OpenAIGatewayService{
+				accountRepo: schedulerGroupAwareOpenAIAccountRepo{schedulerTestOpenAIAccountRepo{accounts: accounts}},
+				cache:       &schedulerTestGatewayCache{},
+				cfg:         cfg,
+				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{
+					acquireResults: map[int64]bool{21102: true},
+					contWaitCounts: map[int64]int{21102: 1},
+					acquiredIDs:    &acquired,
+				}),
+			}
+			scheduler := &defaultOpenAIAccountScheduler{service: svc, stats: newOpenAIAccountRuntimeStats()}
+			selection, err := scheduler.tryFallbackToWeightedSticky(context.Background(), OpenAIAccountScheduleRequest{
+				GroupID:              &groupID,
+				Platform:             PlatformOpenAI,
+				StickyAccountID:      21102,
+				StickyWeighted:       true,
+				RequestedModel:       "gpt-5.1",
+				RequiredTransport:    OpenAIUpstreamTransportAny,
+				RequiredCapability:   OpenAIEndpointCapabilityChatCompletions,
+				ContinuationEligible: tc.eligible,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			if tc.eligible {
+				require.True(t, selection.Acquired, "续聊命中绑定且有空槽时直接拿槽")
+				require.Contains(t, acquired, int64(21102))
+				return
+			}
+			require.False(t, selection.Acquired, "不合格请求在绑定账号有续聊等待者时不得抢槽")
+			require.NotContains(t, acquired, int64(21102), "加权粘性回退不能绕过入口让出")
+			require.NotNil(t, selection.WaitPlan)
+			require.Equal(t, AccountWaitClassNewSession, selection.WaitPlan.Class)
+		})
+	}
+}
+
 func TestTryFallbackToWeightedSticky_WaitPlanFollowsRequestEligibility(t *testing.T) {
 	groupID := int64(10110)
 	accounts := []Account{
