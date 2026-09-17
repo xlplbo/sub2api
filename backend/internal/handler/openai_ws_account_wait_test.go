@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +30,27 @@ type openAIWSAccountWaitSession struct {
 	requests chan []byte
 	finished chan struct{}
 	cancel   chan context.CancelCauseFunc
+	handler  *OpenAIGatewayHandler
+	server   *httptest.Server
+	upstream *httptest.Server
+	groupID  int64
+	// gate 非空时上游在收到请求后阻塞到它关闭，用来让一个请求持续占住槽位。
+	gate chan struct{}
+	// failUpstream 为真时上游对所有请求回 502，用来制造错误轮与 failover。
+	failUpstream atomic.Bool
+}
+
+type openAIWSSessionOptions struct {
+	mode          string
+	timeout       time.Duration
+	holdSeconds   int
+	bindings      service.GatewayCache
+	concurrency   service.ConcurrencyCache
+	extraAccounts []service.Account
+	dialHeader    http.Header
+	skipDial      bool
+	// loadBatch 打开负载批量选号（生产默认开启）；关闭时非高级调度走无溢出语义的快路径。
+	loadBatch bool
 }
 
 func TestOpenAIWSAccountWait_ExitReleasesResources(t *testing.T) {
@@ -316,12 +338,25 @@ func newOpenAIWSAccountWaitSessionWithHold(t *testing.T, mode string, timeout ti
 // newOpenAIWSAccountWaitSessionWithDeps 允许多个会话共用同一份粘性绑定与并发缓存，模拟独立连接命中同一绑定。
 func newOpenAIWSAccountWaitSessionWithDeps(t *testing.T, mode string, timeout time.Duration, holdSeconds int, bindings service.GatewayCache, concurrencyCache service.ConcurrencyCache) *openAIWSAccountWaitSession {
 	t.Helper()
+	return newOpenAIWSSessionWithOptions(t, openAIWSSessionOptions{mode: mode, timeout: timeout, holdSeconds: holdSeconds, bindings: bindings, concurrency: concurrencyCache})
+}
+
+func newOpenAIWSSessionWithOptions(t *testing.T, opts openAIWSSessionOptions) *openAIWSAccountWaitSession {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
-	f := &openAIWSAccountWaitSession{requests: make(chan []byte, 8), finished: make(chan struct{}), cancel: make(chan context.CancelCauseFunc, 1)}
+	mode, timeout, holdSeconds, bindings, concurrencyCache := opts.mode, opts.timeout, opts.holdSeconds, opts.bindings, opts.concurrency
+	f := &openAIWSAccountWaitSession{requests: make(chan []byte, 32), finished: make(chan struct{}), cancel: make(chan context.CancelCauseFunc, 1), groupID: 4202}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if f.failUpstream.Load() {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
 		if r.Method == http.MethodPost {
 			body, _ := io.ReadAll(r.Body)
 			f.requests <- body
+			if f.gate != nil {
+				<-f.gate
+			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = fmt.Fprint(w, "data: "+accountWaitCompleted+"\n\n")
 			return
@@ -337,18 +372,32 @@ func newOpenAIWSAccountWaitSessionWithDeps(t *testing.T, mode string, timeout ti
 				return
 			}
 			f.requests <- body
+			if f.gate != nil {
+				<-f.gate
+			}
 			if conn.Write(r.Context(), coderws.MessageText, []byte(accountWaitCompleted)) != nil {
 				return
 			}
 		}
 	}))
 	t.Cleanup(upstream.Close)
-	repo := &openAIWSTurnBudgetAccountRepo{accounts: []service.Account{{
+	f.upstream = upstream
+	accounts := []service.Account{{
 		ID: 801, Name: "account-wait", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
 		Status: service.StatusActive, Schedulable: true, Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": upstream.URL},
 		Extra:       map[string]any{"openai_apikey_responses_websockets_v2_enabled": true, "openai_apikey_responses_websockets_v2_mode": mode},
-	}}}
+	}}
+	for _, extra := range opts.extraAccounts {
+		if extra.Credentials == nil {
+			extra.Credentials = map[string]any{"api_key": "sk-test", "base_url": upstream.URL}
+		}
+		if extra.Extra == nil {
+			extra.Extra = map[string]any{"openai_apikey_responses_websockets_v2_enabled": true, "openai_apikey_responses_websockets_v2_mode": mode}
+		}
+		accounts = append(accounts, extra)
+	}
+	repo := &openAIWSTurnBudgetAccountRepo{accounts: accounts}
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	cfg.Default.RateMultiplier = 1
 	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
@@ -365,6 +414,7 @@ func newOpenAIWSAccountWaitSessionWithDeps(t *testing.T, mode string, timeout ti
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 2
 	cfg.Gateway.Scheduling.FallbackMaxWaiting = 2
 	cfg.Gateway.OpenAIWS.TurnSlotHoldSeconds = holdSeconds
+	cfg.Gateway.Scheduling.LoadBatchEnabled = opts.loadBatch
 	f.cache = concurrencyCache
 	if f.cache == nil {
 		f.cache = testutil.NewTestConcurrencyCache(t)
@@ -376,8 +426,9 @@ func newOpenAIWSAccountWaitSessionWithDeps(t *testing.T, mode string, timeout ti
 		service.NewBillingService(cfg, nil), nil, billing, openAIWSTurnBudgetHTTPClient{}, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
 	t.Cleanup(gateway.CloseOpenAIWSPool)
 	h := NewOpenAIGatewayHandler(gateway, concurrency, billing, &service.APIKeyService{}, nil, nil, nil, nil, cfg)
-	groupID := int64(4202)
-	apiKey := &service.APIKey{ID: 1802, GroupID: &groupID, User: &service.User{ID: 1702, Status: service.StatusActive}, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive}}
+	f.handler = h
+	groupID := f.groupID
+	apiKey := &service.APIKey{ID: 1802, GroupID: &groupID, User: &service.User{ID: 1702, Status: service.StatusActive}, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, AllowMessagesDispatch: true}}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
@@ -392,12 +443,20 @@ func newOpenAIWSAccountWaitSessionWithDeps(t *testing.T, mode string, timeout ti
 		c.Request = c.Request.WithContext(ctx)
 		h.ResponsesWebSocket(c)
 	})
+	router.POST("/v1/responses", h.Responses)
+	router.POST("/v1/chat/completions", h.ChatCompletions)
+	router.POST("/v1/messages", h.Messages)
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
+	f.server = server
+	if opts.skipDial {
+		close(f.finished)
+		return f
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	var err error
-	f.conn, _, err = coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", nil)
+	f.conn, _, err = coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", &coderws.DialOptions{HTTPHeader: opts.dialHeader})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = f.conn.CloseNow()
@@ -423,8 +482,26 @@ func completeOpenAIWSAccountWaitTurn(t *testing.T, ctx context.Context, f *openA
 
 type openAIWSStickyBindings struct {
 	testutil.StubGatewayCache
-	mu       sync.Mutex
-	accounts map[string]int64
+	mu        sync.Mutex
+	accounts  map[string]int64
+	refreshes int
+}
+
+// snapshot 返回当前全部绑定的副本，键是服务层传入的缓存键。
+func (b *openAIWSStickyBindings) snapshot() map[string]int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make(map[string]int64, len(b.accounts))
+	for k, v := range b.accounts {
+		out[k] = v
+	}
+	return out
+}
+
+func (b *openAIWSStickyBindings) refreshCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.refreshes
 }
 
 func (b *openAIWSStickyBindings) GetSessionAccountID(_ context.Context, _ int64, sessionHash string) (int64, error) {
@@ -447,6 +524,9 @@ func (b *openAIWSStickyBindings) SetSessionAccountID(_ context.Context, _ int64,
 }
 
 func (b *openAIWSStickyBindings) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refreshes++
 	return nil
 }
 
