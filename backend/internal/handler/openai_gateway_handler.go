@@ -2555,8 +2555,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, firstMessage)
-	// 首帧带真实会话标识才有续聊资格；回退种子哈希是同 key 共享的绑定，不得借它插到续聊等待者前面。
-	continuationEligible := sessionHash != ""
+	// 首帧带显式会话标识（session/conversation 头或 prompt_cache_key）才有续聊资格。
+	// GenerateSessionHash 还有内容回退，只凭 model 也能得到非空哈希；内容回退哈希与回退种子一样是共享绑定，
+	// 不得借它插到续聊等待者前面，所以资格不能看哈希是否为空。
+	continuationEligible := h.gatewayService.ExtractSessionID(c, firstMessage) != ""
 	if sessionHash == "" {
 		sessionHash = h.gatewayService.GenerateSessionHashWithFallback(
 			c,

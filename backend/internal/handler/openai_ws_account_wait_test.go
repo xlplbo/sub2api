@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -309,6 +310,12 @@ func newOpenAIWSAccountWaitSession(t *testing.T, mode string, timeout time.Durat
 
 func newOpenAIWSAccountWaitSessionWithHold(t *testing.T, mode string, timeout time.Duration, holdSeconds int) *openAIWSAccountWaitSession {
 	t.Helper()
+	return newOpenAIWSAccountWaitSessionWithDeps(t, mode, timeout, holdSeconds, nil, nil)
+}
+
+// newOpenAIWSAccountWaitSessionWithDeps 允许多个会话共用同一份粘性绑定与并发缓存，模拟独立连接命中同一绑定。
+func newOpenAIWSAccountWaitSessionWithDeps(t *testing.T, mode string, timeout time.Duration, holdSeconds int, bindings service.GatewayCache, concurrencyCache service.ConcurrencyCache) *openAIWSAccountWaitSession {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	f := &openAIWSAccountWaitSession{requests: make(chan []byte, 8), finished: make(chan struct{}), cancel: make(chan context.CancelCauseFunc, 1)}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -358,11 +365,14 @@ func newOpenAIWSAccountWaitSessionWithHold(t *testing.T, mode string, timeout ti
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 2
 	cfg.Gateway.Scheduling.FallbackMaxWaiting = 2
 	cfg.Gateway.OpenAIWS.TurnSlotHoldSeconds = holdSeconds
-	f.cache = testutil.NewTestConcurrencyCache(t)
+	f.cache = concurrencyCache
+	if f.cache == nil {
+		f.cache = testutil.NewTestConcurrencyCache(t)
+	}
 	concurrency := service.NewConcurrencyService(f.cache)
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
-	gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, concurrency,
+	gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, bindings, cfg, nil, concurrency,
 		service.NewBillingService(cfg, nil), nil, billing, openAIWSTurnBudgetHTTPClient{}, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
 	t.Cleanup(gateway.CloseOpenAIWSPool)
 	h := NewOpenAIGatewayHandler(gateway, concurrency, billing, &service.APIKeyService{}, nil, nil, nil, nil, cfg)
@@ -409,6 +419,94 @@ func completeOpenAIWSAccountWaitTurn(t *testing.T, ctx context.Context, f *openA
 	require.NoError(t, err)
 	<-f.requests
 	require.Eventually(t, func() bool { n, _ := f.cache.GetAccountConcurrency(ctx, 801); return n == 0 }, time.Second, time.Millisecond)
+}
+
+type openAIWSStickyBindings struct {
+	testutil.StubGatewayCache
+	mu       sync.Mutex
+	accounts map[string]int64
+}
+
+func (b *openAIWSStickyBindings) GetSessionAccountID(_ context.Context, _ int64, sessionHash string) (int64, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if id, ok := b.accounts[sessionHash]; ok {
+		return id, nil
+	}
+	return 0, service.ErrStickySessionNotFound
+}
+
+func (b *openAIWSStickyBindings) SetSessionAccountID(_ context.Context, _ int64, sessionHash string, accountID int64, _ time.Duration) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.accounts == nil {
+		b.accounts = make(map[string]int64)
+	}
+	b.accounts[sessionHash] = accountID
+	return nil
+}
+
+func (b *openAIWSStickyBindings) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
+	return nil
+}
+
+func (b *openAIWSStickyBindings) DeleteSessionAccountID(_ context.Context, _ int64, sessionHash string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.accounts, sessionHash)
+	return nil
+}
+
+func (b *openAIWSStickyBindings) count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.accounts)
+}
+
+func TestOpenAIWSFirstFrameContinuationEligibilityNeedsExplicitSession(t *testing.T) {
+	svc := &service.OpenAIGatewayService{}
+	newCtx := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		return c
+	}
+	content := []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)
+	require.NotEmpty(t, svc.GenerateSessionHash(newCtx(), content), "只有 model 与 input 的首帧也会走内容回退得到非空哈希")
+	require.Empty(t, svc.ExtractSessionID(newCtx(), content), "内容回退哈希不是显式会话标识")
+	withKey := []byte(`{"type":"response.create","model":"gpt-5.1","input":"first","prompt_cache_key":"pck-1"}`)
+	require.Equal(t, "pck-1", svc.ExtractSessionID(newCtx(), withKey))
+	withHeader := newCtx()
+	withHeader.Request.Header.Set("session_id", "sess-1")
+	require.Equal(t, "sess-1", svc.ExtractSessionID(withHeader, content))
+}
+
+func TestOpenAIWSAccountWait_ContentHashBindingYieldsToContinuationWaiters(t *testing.T) {
+	bindings := &openAIWSStickyBindings{}
+	first := newOpenAIWSAccountWaitSessionWithDeps(t, service.OpenAIWSIngressModeCtxPool, 250*time.Millisecond, 0, bindings, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	completeOpenAIWSAccountWaitTurn(t, ctx, first)
+	require.NotZero(t, bindings.count(), "无显式会话标识的首帧按内容回退哈希写入了共享绑定")
+	require.NoError(t, first.conn.Close(coderws.StatusNormalClosure, ""))
+	select {
+	case <-first.finished:
+	case <-ctx.Done():
+		t.Fatal("first handler did not exit")
+	}
+
+	ok, err := first.cache.IncrementAccountContinuationWaitCount(ctx, 801, 3)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	second := newOpenAIWSAccountWaitSessionWithDeps(t, service.OpenAIWSIngressModeCtxPool, 250*time.Millisecond, 0, bindings, first.cache)
+	require.NoError(t, second.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
+	_, _, err = second.conn.Read(ctx)
+	require.Equal(t, coderws.StatusTryAgainLater, coderws.CloseStatus(err), "同内容的独立连接命中共享绑定时不是续聊，有续聊等待者必须让出而不是抢到空槽")
+	select {
+	case <-second.requests:
+		t.Fatal("request from a content-hash binding jumped the continuation queue")
+	default:
+	}
 }
 
 func completeOpenAIWSTurnKeepingSlot(t *testing.T, ctx context.Context, f *openAIWSAccountWaitSession, input string) {
