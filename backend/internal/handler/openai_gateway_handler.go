@@ -614,6 +614,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	c.Request = c.Request.WithContext(service.WithOpenAIGuardianParentAffinity(
 		c.Request.Context(), c, sessionHashBody, reqModel,
 	))
+	// 与 WS 同规则：显式会话标识才有续聊资格，内容回退哈希是共享绑定，不得插到续聊等待者前面。
+	c.Request = c.Request.WithContext(service.WithOpenAIAdmissionOptions(
+		c.Request.Context(),
+		service.OpenAIAdmissionOptions{ContinuationEligible: h.gatewayService.ExtractSessionID(c, sessionHashBody) != ""},
+	))
 	requireCompact := legacyCompact
 
 	maxAccountSwitches := h.maxAccountSwitches
@@ -1245,6 +1250,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
 	sessionHash, promptCacheKey = resolveOpenAIMessagesMetadataSession(c, sessionHash, promptCacheKey, reqModel, body)
+	// 与 WS 同规则：prompt_cache_key 或 Claude Code 会话头才算显式会话标识，内容回退哈希不算。
+	c.Request = c.Request.WithContext(service.WithOpenAIAdmissionOptions(
+		c.Request.Context(),
+		service.OpenAIAdmissionOptions{ContinuationEligible: promptCacheKey != "" || service.ClaudeCodeSessionIDFromHeader(c) != ""},
+	))
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatAnthropic) {
 		return
 	}
