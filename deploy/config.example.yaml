@@ -537,6 +537,9 @@ gateway:
   # Scheduling configuration
   # 调度配置
   scheduling:
+    # 有新会话等待时，每账号最多连续准入的续聊次数（HTTP/WS 共用，含保槽复用）。
+    # 0 恢复续聊绝对优先；不影响 turn_slot_hold_seconds。修改后重启，各实例保持一致。
+    continuation_burst_limit: 2
     # Sticky session max waiting queue size
     # 粘性会话最大排队长度
     sticky_session_max_waiting: 3

@@ -34,7 +34,7 @@ func (s *OpenAIGatewayService) ResolveOpenAIWSAccountAdmissionMode(account *Acco
 // OpenAIAdmissionOptions 由入口在调用调度器前给出，随 ctx 进入调度请求。
 type OpenAIAdmissionOptions struct {
 	// ContinuationEligible 为真表示会话哈希来自真实会话标识：命中粘性或 previous_response 时
-	// 计划标续聊类、快抢不让出。回退种子哈希的连接置假：快抢在有续聊等待者时让出，计划标新会话类。
+	// 计划标续聊类并参与账号连续准入计数。回退种子哈希的连接置假，计划标新会话类。
 	ContinuationEligible bool
 	// StickyFullWaits 为真时高级调度对粘性账号满槽不逃逸，改返回粘性等待计划。只有 WS 入口置位。
 	StickyFullWaits bool

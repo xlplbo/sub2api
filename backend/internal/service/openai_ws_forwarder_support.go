@@ -480,8 +480,8 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 	continuationEligible := openAIAdmissionOptionsFromContext(ctx).ContinuationEligible
 	var result *AcquireResult
 	var acquireErr error
-	if continuationEligible || !s.hasContinuationWaiters(ctx, accountID) {
-		result, acquireErr = s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+	if s.OpenAIContinuationBurstLimit() > 0 || continuationEligible || !s.hasContinuationWaiters(ctx, accountID) {
+		result, acquireErr = s.tryAcquireAccountSlotForAdmission(ctx, accountID, account.Concurrency, continuationEligible)
 	}
 	if acquireErr == nil && result != nil && result.Acquired {
 		logOpenAIWSBindResponseAccountWarn(
@@ -494,7 +494,7 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 			Account:     account,
 			Acquired:    true,
 			ReleaseFunc: result.ReleaseFunc,
-			RefreshFunc: result.RefreshFunc,
+			ReuseFunc:   result.ReuseFunc,
 		}), nil
 	}
 

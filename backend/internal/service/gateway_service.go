@@ -574,9 +574,9 @@ type AccountWaitClass int
 
 const (
 	AccountWaitClassLegacy AccountWaitClass = iota
-	// AccountWaitClassNewSession 走旧计数键与回退上限，有续聊等待者时让出。
+	// AccountWaitClassNewSession 走旧计数键与回退上限，续聊达到连续准入限额时优先。
 	AccountWaitClassNewSession
-	// AccountWaitClassContinuation 走续聊计数键与粘性上限，不让出。
+	// AccountWaitClassContinuation 走续聊计数键与粘性上限，受账号连续准入限额约束。
 	AccountWaitClassContinuation
 )
 
@@ -603,11 +603,11 @@ type AccountSelectionResult struct {
 	Account     *Account
 	Acquired    bool
 	ReleaseFunc func()
-	// RefreshFunc 与 ReleaseFunc 同源，为已抢到的账号槽续租；未抢槽时为 nil。
+	// ReuseFunc 与 ReleaseFunc 同源，用于下一轮准入和续租；未抢槽时为 nil。
 	// 不限并发的账号（Concurrency <= 0）与未接并发服务（concurrencyService 为 nil）时
-	// 没有真实槽位，Acquired 为真但 RefreshFunc 仍为 nil。
-	RefreshFunc func(ctx context.Context) (bool, error)
-	WaitPlan    *AccountWaitPlan // nil means no wait allowed
+	// 没有真实槽位，Acquired 为真但 ReuseFunc 仍为 nil。
+	ReuseFunc func(ctx context.Context) (bool, error)
+	WaitPlan  *AccountWaitPlan // nil means no wait allowed
 	// stickySessionHit 标记账号来自会话粘性绑定命中，供非高级调度路径回填决策标签。
 	stickySessionHit bool
 	// stickyBindingPreserved 标记本次选号保留了已有绑定（粘性账号队满溢出），

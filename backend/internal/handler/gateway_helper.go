@@ -230,19 +230,9 @@ func (h *ConcurrencyHelper) DecrementAccountContinuationWaitCount(ctx context.Co
 	h.concurrencyService.DecrementAccountContinuationWaitCount(ctx, accountID)
 }
 
-// HasContinuationWaiters 供新会话类抢槽前让出；读失败按无等待处理。
-func (h *ConcurrencyHelper) HasContinuationWaiters(ctx context.Context, accountID int64) bool {
-	waiting, err := h.concurrencyService.GetAccountContinuationWaitingCount(ctx, accountID)
-	return err == nil && waiting > 0
-}
-
-// TryAcquireAccountSlotForPlan 是入口快抢。调度器因有续聊等待者而返回新会话等待计划时，账号可能仍有空槽，
-// 这里若照常快抢就绕过了让出；新会话类先看续聊等待数，有就直接进等待，其余类别照常快抢。
-func (h *ConcurrencyHelper) TryAcquireAccountSlotForPlan(ctx context.Context, accountID int64, maxConcurrency int, class service.AccountWaitClass) (*service.AcquireResult, error) {
-	if class == service.AccountWaitClassNewSession && h.HasContinuationWaiters(ctx, accountID) {
-		return &service.AcquireResult{}, nil
-	}
-	return h.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
+// TryAcquireAccountSlotForPlan 让快抢与等待轮询使用同一原子准入规则。
+func (h *ConcurrencyHelper) TryAcquireAccountSlotForPlan(ctx context.Context, accountID int64, maxConcurrency int, class service.AccountWaitClass, burstLimit int) (*service.AcquireResult, error) {
+	return h.concurrencyService.AcquireAccountSlotForClass(ctx, accountID, maxConcurrency, class, burstLimit)
 }
 
 // TryAcquireUserSlot 尝试立即获取用户并发槽位。
@@ -322,7 +312,7 @@ func (h *ConcurrencyHelper) acquireUserSlotWithWaitTimeout(c *gin.Context, userI
 	defer h.DecrementWaitCount(ctx, userID)
 
 	// Need to wait - handle streaming ping if needed
-	releaseFunc, err = h.waitForSlotWithPingTimeout(c, "user", userID, maxConcurrency, timeout, isStream, streamStarted, false, false)
+	releaseFunc, err = h.waitForSlotWithPingTimeout(c, "user", userID, maxConcurrency, timeout, isStream, streamStarted, false, service.AccountWaitClassLegacy, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -378,11 +368,11 @@ func (h *ConcurrencyHelper) AcquireAccountSlotWithWait(c *gin.Context, accountID
 // waitForSlotWithPing waits for a concurrency slot, sending ping events for streaming requests.
 // streamStarted pointer is updated when streaming begins (for proper error handling by caller).
 func (h *ConcurrencyHelper) waitForSlotWithPing(c *gin.Context, slotType string, id int64, maxConcurrency int, isStream bool, streamStarted *bool) (func(), error) {
-	return h.waitForSlotWithPingTimeout(c, slotType, id, maxConcurrency, maxConcurrencyWait, isStream, streamStarted, false, false)
+	return h.waitForSlotWithPingTimeout(c, slotType, id, maxConcurrency, maxConcurrencyWait, isStream, streamStarted, false, service.AccountWaitClassLegacy, 0)
 }
 
 // waitForSlotWithPingTimeout waits for a concurrency slot with a custom timeout.
-func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType string, id int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, tryImmediate bool, yieldToContinuation bool) (func(), error) {
+func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType string, id int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, tryImmediate bool, class service.AccountWaitClass, burstLimit int) (func(), error) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
@@ -390,11 +380,7 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 		if slotType == "user" {
 			return h.concurrencyService.AcquireUserSlot(ctx, id, maxConcurrency)
 		}
-		class := service.AccountWaitClassLegacy
-		if yieldToContinuation {
-			class = service.AccountWaitClassNewSession
-		}
-		return h.TryAcquireAccountSlotForPlan(ctx, id, maxConcurrency, class)
+		return h.TryAcquireAccountSlotForPlan(ctx, id, maxConcurrency, class, burstLimit)
 	}
 
 	if tryImmediate {
@@ -498,13 +484,11 @@ func waitForConcurrencySlotResult(ctx context.Context, acquire func() (*service.
 // AcquireAccountSlotWithWaitTimeout acquires an account slot with a custom timeout (keeps SSE ping).
 // 旧签名调用点不让出，行为与改前一致。
 func (h *ConcurrencyHelper) AcquireAccountSlotWithWaitTimeout(c *gin.Context, accountID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
-	return h.AcquireAccountSlotWithWaitTimeoutYielding(c, accountID, maxConcurrency, timeout, isStream, streamStarted, false)
+	return h.AcquireAccountSlotWithWaitTimeoutForClass(c, accountID, maxConcurrency, timeout, isStream, streamStarted, service.AccountWaitClassLegacy, 0)
 }
 
-// AcquireAccountSlotWithWaitTimeoutYielding 在 yieldToContinuation 为真时，只要账号上有续聊等待者就不抢槽，
-// 继续退避直到续聊清空或超时；供新会话类等待计划使用。
-func (h *ConcurrencyHelper) AcquireAccountSlotWithWaitTimeoutYielding(c *gin.Context, accountID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, yieldToContinuation bool) (func(), error) {
-	return h.waitForSlotWithPingTimeout(c, "account", accountID, maxConcurrency, timeout, isStream, streamStarted, true, yieldToContinuation)
+func (h *ConcurrencyHelper) AcquireAccountSlotWithWaitTimeoutForClass(c *gin.Context, accountID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, class service.AccountWaitClass, burstLimit int) (func(), error) {
+	return h.waitForSlotWithPingTimeout(c, "account", accountID, maxConcurrency, timeout, isStream, streamStarted, true, class, burstLimit)
 }
 
 // nextBackoff 计算下一次退避时间

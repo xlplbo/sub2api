@@ -21,7 +21,7 @@ func newYieldTestGinContext(t *testing.T) *gin.Context {
 	return c
 }
 
-func TestAcquireAccountSlotWithWaitTimeoutYielding_YieldsWhileContinuationWaits(t *testing.T) {
+func TestAcquireAccountSlotWithWaitTimeoutForClass_NewSessionYieldsWhileContinuationWaits(t *testing.T) {
 	cache := testutil.NewTestConcurrencyCache(t)
 	helper := NewConcurrencyHelper(service.NewConcurrencyService(cache), "", 0)
 	ctx := context.Background()
@@ -37,7 +37,7 @@ func TestAcquireAccountSlotWithWaitTimeoutYielding_YieldsWhileContinuationWaits(
 	}()
 
 	streamStarted := false
-	release, err := helper.AcquireAccountSlotWithWaitTimeoutYielding(newYieldTestGinContext(t), 901, 1, 700*time.Millisecond, false, &streamStarted, true)
+	release, err := helper.AcquireAccountSlotWithWaitTimeoutForClass(newYieldTestGinContext(t), 901, 1, 700*time.Millisecond, false, &streamStarted, service.AccountWaitClassNewSession, 0)
 	require.Nil(t, release)
 	var concurrencyErr *ConcurrencyError
 	require.ErrorAs(t, err, &concurrencyErr)
@@ -47,7 +47,7 @@ func TestAcquireAccountSlotWithWaitTimeoutYielding_YieldsWhileContinuationWaits(
 	require.Equal(t, 0, n)
 
 	require.NoError(t, cache.DecrementAccountContinuationWaitCount(ctx, 901))
-	release, err = helper.AcquireAccountSlotWithWaitTimeoutYielding(newYieldTestGinContext(t), 901, 1, 700*time.Millisecond, false, &streamStarted, true)
+	release, err = helper.AcquireAccountSlotWithWaitTimeoutForClass(newYieldTestGinContext(t), 901, 1, 700*time.Millisecond, false, &streamStarted, service.AccountWaitClassNewSession, 0)
 	require.NoError(t, err)
 	require.NotNil(t, release)
 	release()
@@ -75,7 +75,7 @@ func TestTryAcquireAccountSlotForPlan_NewSessionYieldsWhenSlotFree(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	result, err := helper.TryAcquireAccountSlotForPlan(ctx, 904, 1, service.AccountWaitClassNewSession)
+	result, err := helper.TryAcquireAccountSlotForPlan(ctx, 904, 1, service.AccountWaitClassNewSession, 0)
 	require.NoError(t, err)
 	require.False(t, result.Acquired, "账号有空槽但有续聊等待者，新会话入口不快抢")
 	n, err := cache.GetAccountConcurrency(ctx, 904)
@@ -83,14 +83,14 @@ func TestTryAcquireAccountSlotForPlan_NewSessionYieldsWhenSlotFree(t *testing.T)
 	require.Equal(t, 0, n)
 
 	for _, class := range []service.AccountWaitClass{service.AccountWaitClassContinuation, service.AccountWaitClassLegacy} {
-		result, err = helper.TryAcquireAccountSlotForPlan(ctx, 904, 1, class)
+		result, err = helper.TryAcquireAccountSlotForPlan(ctx, 904, 1, class, 0)
 		require.NoError(t, err)
 		require.True(t, result.Acquired, class.String())
 		result.ReleaseFunc()
 	}
 
 	require.NoError(t, cache.DecrementAccountContinuationWaitCount(ctx, 904))
-	result, err = helper.TryAcquireAccountSlotForPlan(ctx, 904, 1, service.AccountWaitClassNewSession)
+	result, err = helper.TryAcquireAccountSlotForPlan(ctx, 904, 1, service.AccountWaitClassNewSession, 0)
 	require.NoError(t, err)
 	require.True(t, result.Acquired, "续聊清空后新会话恢复快抢")
 	result.ReleaseFunc()

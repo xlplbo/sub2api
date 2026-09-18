@@ -316,9 +316,9 @@ func (s *ConcurrencyService) SetAccountLoadBatchCacheTTL(ttl time.Duration) {
 type AcquireResult struct {
 	Acquired    bool
 	ReleaseFunc func() // Must be called when done (typically via defer)
-	// RefreshFunc 为仍持有的槽续租；返回 false 表示失租。只有账号槽且 Acquired 为真时才可能非 nil：
-	// 不限并发的账号（maxConcurrency <= 0）没有真实槽位，Acquired 为真但 RefreshFunc 仍为 nil。
-	RefreshFunc func(ctx context.Context) (bool, error)
+	// ReuseFunc 准入下一轮并续租；返回 false 表示不可复用。
+	// 仅已持有真实账号槽时非 nil；不限并发的账号（maxConcurrency <= 0）没有真实槽位。
+	ReuseFunc func(ctx context.Context) (bool, error)
 }
 
 type AccountWithConcurrency struct {
@@ -367,7 +367,10 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 	if err != nil {
 		return nil, err
 	}
+	return s.accountSlotResult(accountID, requestID, acquired), nil
+}
 
+func (s *ConcurrencyService) accountSlotResult(accountID int64, requestID string, acquired bool) *AcquireResult {
 	if acquired {
 		return &AcquireResult{
 			Acquired: true,
@@ -378,16 +381,16 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 					logger.LegacyPrintf("service.concurrency", "Warning: failed to release account slot for %d (req=%s): %v", accountID, requestID, err)
 				}
 			},
-			RefreshFunc: func(ctx context.Context) (bool, error) {
+			ReuseFunc: func(ctx context.Context) (bool, error) {
 				return s.cache.RefreshAccountSlot(ctx, accountID, requestID)
 			},
-		}, nil
+		}
 	}
 
 	return &AcquireResult{
 		Acquired:    false,
 		ReleaseFunc: nil,
-	}, nil
+	}
 }
 
 // AcquireUserSlot attempts to acquire a concurrency slot for a user.

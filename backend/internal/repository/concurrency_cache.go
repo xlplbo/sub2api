@@ -300,6 +300,10 @@ var (
 	`)
 
 	// incrementAccountWaitScript - account-level wait queue count (refresh TTL on each increment)
+	// KEYS[1] = wait count key
+	// KEYS[2] = optional continuation burst count key (clear on queue start, otherwise refresh TTL)
+	// ARGV[1] = max wait count
+	// ARGV[2] = TTL in seconds
 	// 返回值同 incrementWaitScript：{是否成功, Redis 当前秒}。
 	incrementAccountWaitScript = redis.NewScript(`
 		-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
@@ -321,15 +325,27 @@ var (
 
 		-- Refresh TTL so long-running traffic doesn't expire active queue counters.
 		redis.call('EXPIRE', KEYS[1], ARGV[2])
+		if KEYS[2] then
+			if current == 0 then
+				redis.call('DEL', KEYS[2])
+			else
+				redis.call('EXPIRE', KEYS[2], ARGV[2])
+			end
+		end
 
 		return {1, now}
 	`)
 
-	// decrementWaitScript - same as before
+	// decrementWaitScript - decrement wait queue count if positive
+	// KEYS[1] = wait count key
+	// KEYS[2] = optional continuation burst count key (clear when queue becomes empty)
 	decrementWaitScript = redis.NewScript(`
 			local current = redis.call('GET', KEYS[1])
 			if current ~= false and tonumber(current) > 0 then
 				redis.call('DECR', KEYS[1])
+			end
+			if KEYS[2] and (current == false or tonumber(current) <= 1) then
+				redis.call('DEL', KEYS[2])
 			end
 			return 1
 		`)
@@ -688,7 +704,7 @@ func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int
 
 func (c *concurrencyCache) ReleaseAccountSlot(ctx context.Context, accountID int64, requestID string) error {
 	key := accountSlotKey(accountID)
-	if err := c.rdb.ZRem(ctx, key, requestID).Err(); err != nil {
+	if err := releaseAccountAdmissionScript.Run(ctx, c.rdb, []string{key, accountSlotReuseKey(accountID, requestID)}, requestID).Err(); err != nil {
 		return err
 	}
 	// 释放后用真实负载刷新索引；若没有槽位和等待计数，会移除索引 member。
@@ -971,7 +987,7 @@ func (c *concurrencyCache) DecrementWaitCount(ctx context.Context, userID int64)
 
 func (c *concurrencyCache) IncrementAccountWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error) {
 	key := accountWaitKey(accountID)
-	result, now, err := runScriptInt64Pair(ctx, c.rdb, incrementAccountWaitScript, []string{key}, maxWait, c.waitQueueTTLSeconds)
+	result, now, err := runScriptInt64Pair(ctx, c.rdb, incrementAccountWaitScript, []string{key, accountContinuationBurstKey(accountID)}, maxWait, c.waitQueueTTLSeconds)
 	if err != nil {
 		return false, err
 	}
@@ -984,7 +1000,7 @@ func (c *concurrencyCache) IncrementAccountWaitCount(ctx context.Context, accoun
 
 func (c *concurrencyCache) DecrementAccountWaitCount(ctx context.Context, accountID int64) error {
 	key := accountWaitKey(accountID)
-	_, err := decrementWaitScript.Run(ctx, c.rdb, []string{key}).Result()
+	_, err := decrementWaitScript.Run(ctx, c.rdb, []string{key, accountContinuationBurstKey(accountID)}).Result()
 	if err == nil {
 		// 等待计数归零后索引需要同步删除，避免后台任务反复处理空账号。
 		c.refreshAccountActiveIndex(ctx, accountID)
@@ -1007,7 +1023,7 @@ func (c *concurrencyCache) GetAccountWaitingCount(ctx context.Context, accountID
 // Account continuation wait queue operations
 //
 // 续聊等待者单独计数：续聊类等待计划的上限只数这里，新会话类不受其影响；
-// 负载层与新会话快抢在这个计数大于 0 时让出。
+// 新会话快抢结合此计数与连续续聊次数决定让出。
 
 func (c *concurrencyCache) IncrementAccountContinuationWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error) {
 	key := accountContinuationWaitKey(accountID)

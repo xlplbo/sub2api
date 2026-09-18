@@ -635,27 +635,27 @@ func TestIncrementAccountWaitCount_NilCache(t *testing.T) {
 	require.True(t, allowed)
 }
 
-func TestConcurrencyService_AcquireAccountSlot_RefreshFunc(t *testing.T) {
+func TestConcurrencyService_AcquireAccountSlot_ReuseFunc(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{acquireResult: true, refreshResult: true}
 	svc := NewConcurrencyService(cache)
 	ctx := context.Background()
 	result, err := svc.AcquireAccountSlot(ctx, 21, 1)
 	require.NoError(t, err)
 	require.True(t, result.Acquired)
-	require.NotNil(t, result.RefreshFunc)
+	require.NotNil(t, result.ReuseFunc)
 
-	ok, err := result.RefreshFunc(ctx)
+	ok, err := result.ReuseFunc(ctx)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, cache.acquiredRequestIDs, 1)
-	require.Equal(t, cache.acquiredRequestIDs, cache.refreshedRequestIDs, "续租用抢槽时的同一个 requestID")
+	require.Equal(t, cache.acquiredRequestIDs, cache.refreshedRequestIDs, "复用沿用抢槽时的同一个 requestID 续租")
 
 	cache.refreshResult = false
-	ok, err = result.RefreshFunc(ctx)
+	ok, err = result.ReuseFunc(ctx)
 	require.NoError(t, err)
 	require.False(t, ok)
 
 	unlimited, err := svc.AcquireAccountSlot(ctx, 22, 0)
 	require.NoError(t, err)
-	require.Nil(t, unlimited.RefreshFunc, "无限制账号没有续租函数")
+	require.Nil(t, unlimited.ReuseFunc, "无限制账号没有槽位复用函数")
 }

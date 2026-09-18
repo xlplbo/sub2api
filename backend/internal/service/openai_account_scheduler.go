@@ -91,7 +91,7 @@ type OpenAIAccountScheduleRequest struct {
 	// RequireCompact is only for legacy /responses/compact capability filtering
 	// and compact_model_mapping; native remote compaction v2 leaves it false.
 	RequireCompact bool
-	// ContinuationEligible 为假时粘性与 previous_response 快抢在有续聊等待者时让出，计划标新会话类。
+	// ContinuationEligible 决定粘性与 previous_response 准入类别，由账号连续准入规则仲裁。
 	// 直接构造请求时必须显式置位，零值按不合格处理。
 	ContinuationEligible bool
 	// StickyFullWaits 为真时粘性账号满槽不逃逸，见 selectBySessionHash。
@@ -581,12 +581,12 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		)
 		return nil, true, nil
 	}
-	// 不合格请求（回退种子哈希）不能借共享绑定插到续聊等待者前面：有续聊在等就视同满槽。
-	yieldToContinuation := !req.ContinuationEligible && s.service.hasContinuationWaiters(ctx, accountID)
+	// N=0 保留续聊优先的前置判断；N>0 交给原子准入决定当前轮到哪类请求。
+	yieldToContinuation := s.service.OpenAIContinuationBurstLimit() == 0 && !req.ContinuationEligible && s.service.hasContinuationWaiters(ctx, accountID)
 	var result *AcquireResult
 	var acquireErr error
 	if !yieldToContinuation {
-		result, acquireErr = s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+		result, acquireErr = s.service.tryAcquireAccountSlotForAdmission(ctx, accountID, account.Concurrency, req.ContinuationEligible)
 	}
 	if acquireErr != nil && req.DisableStickyEscape {
 		return nil, false, acquireErr
@@ -599,7 +599,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			Account:     account,
 			Acquired:    true,
 			ReleaseFunc: result.ReleaseFunc,
-			RefreshFunc: result.RefreshFunc,
+			ReuseFunc:   result.ReuseFunc,
 		}), false, nil
 	}
 	stickyFull := yieldToContinuation || (acquireErr == nil && result != nil && !result.Acquired)
@@ -1217,7 +1217,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		}
 		if candidate.loadKnown && candidate.loadInfo != nil &&
 			((candidate.account.Concurrency > 0 && candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency) ||
-				candidate.loadInfo.ContinuationWaiting > 0) {
+				(s.service.OpenAIContinuationBurstLimit() == 0 && candidate.loadInfo.ContinuationWaiting > 0)) {
 			continue
 		}
 
@@ -1272,7 +1272,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			Account:     fresh,
 			Acquired:    true,
 			ReleaseFunc: result.ReleaseFunc,
-			RefreshFunc: result.RefreshFunc,
+			ReuseFunc:   result.ReuseFunc,
 		}), compactBlocked, nil
 	}
 	return nil, compactBlocked, nil
@@ -1354,12 +1354,12 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
 			continue
 		}
-		// 与 selectBySessionHash 同规则：不合格请求不能借共享绑定插到续聊等待者前面，有续聊在等就视同满槽。
-		yieldToContinuation := !req.ContinuationEligible && s.service.hasContinuationWaiters(ctx, account.ID)
+		// 与 selectBySessionHash 使用相同的准入类别与连续次数限额。
+		yieldToContinuation := s.service.OpenAIContinuationBurstLimit() == 0 && !req.ContinuationEligible && s.service.hasContinuationWaiters(ctx, account.ID)
 		var result *AcquireResult
 		var acquireErr error
 		if !yieldToContinuation {
-			result, acquireErr = s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+			result, acquireErr = s.service.tryAcquireAccountSlotForAdmission(ctx, account.ID, account.Concurrency, req.ContinuationEligible)
 		}
 		if acquireErr != nil {
 			return nil, acquireErr
@@ -1372,7 +1372,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 				Account:     account,
 				Acquired:    true,
 				ReleaseFunc: result.ReleaseFunc,
-				RefreshFunc: result.RefreshFunc,
+				ReuseFunc:   result.ReuseFunc,
 			}), nil
 		}
 		if s.service.concurrencyService != nil {

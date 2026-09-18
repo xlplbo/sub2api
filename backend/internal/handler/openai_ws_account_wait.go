@@ -24,6 +24,19 @@ type openAIWSAccountWaitBudget struct {
 	continuation bool
 }
 
+func (h *OpenAIGatewayHandler) shouldYieldWSAccountSlot(ctx context.Context, accountID int64, turn int, log *zap.Logger) bool {
+	limit := h.gatewayService.OpenAIContinuationBurstLimit()
+	reason, err := h.concurrencyHelper.concurrencyService.HeldAccountSlotYieldReason(ctx, accountID, limit)
+	if err != nil {
+		log.Warn("openai.websocket_account_admission_state_failed", zap.Int64("account_id", accountID), zap.Error(err))
+		return limit > 0
+	}
+	if reason != "" {
+		log.Debug("openai.websocket_account_slot_yielded", zap.Int64("account_id", accountID), zap.Int("turn", turn), zap.String("reason", reason))
+	}
+	return reason != ""
+}
+
 func (b *openAIWSAccountWaitBudget) nextTurn() {
 	b.turn++
 	b.deadline = time.Time{}
@@ -99,7 +112,7 @@ func (h *OpenAIGatewayHandler) acquireWSAccountSlotLease(ctx context.Context, ac
 	if plan != nil {
 		planClass = plan.Class
 	}
-	fast, err := h.concurrencyHelper.TryAcquireAccountSlotForPlan(ctx, account.ID, maxConcurrency, planClass)
+	fast, err := h.concurrencyHelper.TryAcquireAccountSlotForPlan(ctx, account.ID, maxConcurrency, planClass, h.gatewayService.OpenAIContinuationBurstLimit())
 	if err != nil {
 		return nil, nil, service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire account concurrency slot", err)
 	}
@@ -108,9 +121,10 @@ func (h *OpenAIGatewayHandler) acquireWSAccountSlotLease(ctx context.Context, ac
 			fast.ReleaseFunc()
 			return nil, nil, context.Cause(ctx)
 		}
-		return fast.ReleaseFunc, fast.RefreshFunc, nil
+		return fast.ReleaseFunc, fast.ReuseFunc, nil
 	}
-	if !account.IsOpenAI() || !budget.canWait(mode, phase) || plan == nil || plan.Timeout <= 0 || plan.MaxWaiting <= 0 {
+	canWaitAccount := account.IsOpenAI() || (h.gatewayService.OpenAIContinuationBurstLimit() > 0 && account.IsOpenAICompatible())
+	if !canWaitAccount || !budget.canWait(mode, phase) || plan == nil || plan.Timeout <= 0 || plan.MaxWaiting <= 0 {
 		return nil, nil, openAIWSAccountBusyError()
 	}
 	deadline := budget.waitDeadline(plan.Timeout, retryDeadline)
@@ -133,7 +147,7 @@ func (h *OpenAIGatewayHandler) acquireWSAccountSlotLease(ctx context.Context, ac
 	started := time.Now()
 	log.Info("openai.websocket_account_wait_started", zap.Int64("account_id", account.ID), zap.String("mode", mode), zap.String("phase", phase), zap.Int("turn", budget.turn), zap.Int("max_concurrency", maxConcurrency), zap.Int("max_waiting", plan.MaxWaiting), zap.String("class", plan.Class.String()), zap.Int64("budget_ms", time.Until(deadline).Milliseconds()))
 	result, err := waitForConcurrencySlotResult(waitCtx, func() (*service.AcquireResult, error) {
-		return h.concurrencyHelper.TryAcquireAccountSlotForPlan(waitCtx, account.ID, maxConcurrency, plan.Class)
+		return h.concurrencyHelper.TryAcquireAccountSlotForPlan(waitCtx, account.ID, maxConcurrency, plan.Class, h.gatewayService.OpenAIContinuationBurstLimit())
 	}, nil, nil)
 	if err == nil && waitCtx.Err() != nil {
 		if result != nil && result.ReleaseFunc != nil {
@@ -157,7 +171,7 @@ func (h *OpenAIGatewayHandler) acquireWSAccountSlotLease(ctx context.Context, ac
 	}
 	log.Info("openai.websocket_account_wait_finished", zap.Int64("account_id", account.ID), zap.String("mode", mode), zap.String("phase", phase), zap.Int("turn", budget.turn), zap.Int64("wait_ms", time.Since(started).Milliseconds()), zap.String("class", plan.Class.String()), zap.String("reason", reason))
 	if err == nil {
-		return result.ReleaseFunc, result.RefreshFunc, nil
+		return result.ReleaseFunc, result.ReuseFunc, nil
 	}
 	if ctx.Err() != nil {
 		return nil, nil, context.Cause(ctx)

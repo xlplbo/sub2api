@@ -1145,11 +1145,10 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if err != nil {
 			return nil, err
 		}
-		// 只有"命中绑定且合格"的续聊免让出；新会话与不合格请求抢槽前都要看续聊等待数，
-		// 否则未命中绑定的新会话会直接拿到有续聊等待者的账号，返回 Acquired=true 后 handler 无法补救。
+		// 开启连续准入限额时由 Redis 原子仲裁；N=0 保留原有快抢前的续聊优先判断。
 		var result *AcquireResult
-		if (stickyHit && continuationEligible) || !s.hasContinuationWaiters(ctx, account.ID) {
-			result, err = s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+		if s.OpenAIContinuationBurstLimit() > 0 || (stickyHit && continuationEligible) || !s.hasContinuationWaiters(ctx, account.ID) {
+			result, err = s.tryAcquireAccountSlotForAdmission(ctx, account.ID, account.Concurrency, stickyHit && continuationEligible)
 		}
 		if err == nil && result != nil && result.Acquired {
 			selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result)
@@ -1217,8 +1216,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					} else {
 						var result *AcquireResult
 						var err error
-						if continuationEligible || !s.hasContinuationWaiters(ctx, accountID) {
-							result, err = s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+						if s.OpenAIContinuationBurstLimit() > 0 || continuationEligible || !s.hasContinuationWaiters(ctx, accountID) {
+							result, err = s.tryAcquireAccountSlotForAdmission(ctx, accountID, account.Concurrency, continuationEligible)
 						}
 						if err == nil && result != nil && result.Acquired {
 							selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result)
@@ -1310,7 +1309,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			if loadInfo == nil {
 				loadInfo = &AccountLoadInfo{AccountID: acc.ID}
 			}
-			if loadInfo.LoadRate < 100 && loadInfo.ContinuationWaiting == 0 {
+			if loadInfo.LoadRate < 100 && (s.OpenAIContinuationBurstLimit() > 0 || loadInfo.ContinuationWaiting == 0) {
 				available = append(available, accountWithLoad{
 					account:  acc,
 					loadInfo: loadInfo,
@@ -1517,10 +1516,21 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 }
 
 func (s *OpenAIGatewayService) tryAcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
+	return s.tryAcquireAccountSlotForAdmission(ctx, accountID, maxConcurrency, false)
+}
+
+func (s *OpenAIGatewayService) tryAcquireAccountSlotForAdmission(ctx context.Context, accountID int64, maxConcurrency int, continuation bool) (*AcquireResult, error) {
 	if s.concurrencyService == nil {
 		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
 	}
-	return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
+	if s.OpenAIContinuationBurstLimit() == 0 {
+		return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
+	}
+	class := AccountWaitClassNewSession
+	if continuation {
+		class = AccountWaitClassContinuation
+	}
+	return s.concurrencyService.AcquireAccountSlotForClass(ctx, accountID, maxConcurrency, class, s.OpenAIContinuationBurstLimit())
 }
 
 func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability) *Account {
@@ -1742,7 +1752,7 @@ func (s *OpenAIGatewayService) newAcquiredSelectionResult(ctx context.Context, a
 		}
 		return nil, err
 	}
-	selection.RefreshFunc = result.RefreshFunc
+	selection.ReuseFunc = result.ReuseFunc
 	return selection, nil
 }
 

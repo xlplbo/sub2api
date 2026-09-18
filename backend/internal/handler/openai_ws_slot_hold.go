@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-// openAIWSHeldAccountSlot 是轮间挂起的账号槽：轮结束不释放，挂保留定时器；下一轮在到期前取回并续租。
+// openAIWSHeldAccountSlot 是轮间挂起的账号槽：轮结束不释放，挂保留定时器；下一轮在到期前取回并重新准入、续租。
 // 状态变更都在 mu 下进行。释放函数由 wrapReleaseOnDone 包装，本身只执行一次；
 // 这里保证 take、expire、releaseNow 三者对同一个挂起态最多只有一个拿到 release。
 type openAIWSHeldAccountSlot struct {
 	mu       sync.Mutex
 	release  func()
-	refresh  func(context.Context) (bool, error)
+	reuse    func(context.Context) (bool, error)
 	timer    *time.Timer
 	parkedAt time.Time
 	onExpire func(heldFor time.Duration)
@@ -22,13 +22,13 @@ type openAIWSHeldAccountSlot struct {
 }
 
 // park 挂起一个账号槽；已有挂起态时先释放前一个。hold 到期由本代定时器释放。
-func (s *openAIWSHeldAccountSlot) park(release func(), refresh func(context.Context) (bool, error), hold time.Duration, onExpire func(heldFor time.Duration)) {
+func (s *openAIWSHeldAccountSlot) park(release func(), reuse func(context.Context) (bool, error), hold time.Duration, onExpire func(heldFor time.Duration)) {
 	s.mu.Lock()
 	previous := s.takeLocked()
 	s.generation++
 	generation := s.generation
 	s.release = release
-	s.refresh = refresh
+	s.reuse = reuse
 	s.parkedAt = time.Now()
 	s.onExpire = onExpire
 	s.timer = time.AfterFunc(hold, func() { s.expire(generation) })
@@ -65,10 +65,10 @@ func (s *openAIWSHeldAccountSlot) take() (func(), func(context.Context) (bool, e
 	if s.release == nil {
 		return nil, nil, 0
 	}
-	refresh := s.refresh
+	reuse := s.reuse
 	heldFor := time.Since(s.parkedAt)
 	release := s.takeLocked()
-	return release, refresh, heldFor
+	return release, reuse, heldFor
 }
 
 // releaseNow 立即释放挂起槽：连接关闭、换号、进入用户等待前调用。返回是否真的释放了一个。
@@ -96,7 +96,7 @@ func (s *openAIWSHeldAccountSlot) takeLocked() func() {
 		s.timer = nil
 	}
 	s.release = nil
-	s.refresh = nil
+	s.reuse = nil
 	s.parkedAt = time.Time{}
 	s.onExpire = nil
 	return release
