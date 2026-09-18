@@ -45,6 +45,7 @@ type openAIWSSessionOptions struct {
 	timeout       time.Duration
 	holdSeconds   int
 	burstLimit    int
+	waitingLimit  int
 	bindings      service.GatewayCache
 	concurrency   service.ConcurrencyCache
 	extraAccounts []service.Account
@@ -413,6 +414,10 @@ func newOpenAIWSSessionWithOptions(t *testing.T, opts openAIWSSessionOptions) *o
 	cfg.Gateway.Scheduling.StickySessionWaitTimeout = timeout
 	cfg.Gateway.Scheduling.FallbackWaitTimeout = timeout
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 2
+	cfg.Gateway.Scheduling.ContinuationMaxWaiting = 2
+	if opts.waitingLimit > 0 {
+		cfg.Gateway.Scheduling.ContinuationMaxWaiting = opts.waitingLimit
+	}
 	cfg.Gateway.Scheduling.FallbackMaxWaiting = 2
 	cfg.Gateway.OpenAIWS.TurnSlotHoldSeconds = holdSeconds
 	cfg.Gateway.Scheduling.ContinuationBurstLimit = opts.burstLimit

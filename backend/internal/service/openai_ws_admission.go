@@ -57,7 +57,7 @@ func openAIAdmissionOptionsFromContext(ctx context.Context) OpenAIAdmissionOptio
 
 func (s *OpenAIGatewayService) OpenAIWSAccountWaitPlan(account *Account) *AccountWaitPlan {
 	cfg := s.schedulingConfig()
-	return &AccountWaitPlan{AccountID: account.ID, MaxConcurrency: account.Concurrency, Timeout: cfg.StickySessionWaitTimeout, MaxWaiting: cfg.StickySessionMaxWaiting, Class: AccountWaitClassContinuation}
+	return &AccountWaitPlan{AccountID: account.ID, MaxConcurrency: account.Concurrency, Timeout: cfg.StickySessionWaitTimeout, MaxWaiting: cfg.ContinuationMaxWaiting, Class: AccountWaitClassContinuation}
 }
 
 // OpenAIWSTurnSlotHold 返回轮间账号槽保留时长；0 表示关闭。

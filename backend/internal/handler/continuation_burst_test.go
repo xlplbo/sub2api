@@ -20,7 +20,7 @@ func TestContinuationBurstWSTurnsYieldAndResume(t *testing.T) {
 	for _, mode := range []string{service.OpenAIWSIngressModeCtxPool, service.OpenAIWSIngressModePassthrough, service.OpenAIWSIngressModeHTTPBridge} {
 		for _, hold := range []int{0, 5} {
 			t.Run(fmt.Sprintf("%s/hold=%d", mode, hold), func(t *testing.T) {
-				f := newOpenAIWSSessionWithOptions(t, openAIWSSessionOptions{mode: mode, timeout: 3 * time.Second, holdSeconds: hold, burstLimit: 2})
+				f := newOpenAIWSSessionWithOptions(t, openAIWSSessionOptions{mode: mode, timeout: 3 * time.Second, holdSeconds: hold, burstLimit: 2, waitingLimit: 100})
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				completeOpenAIWSTurnKeepingSlot(t, ctx, f, "first")
@@ -36,11 +36,16 @@ func TestContinuationBurstWSTurnsYieldAndResume(t *testing.T) {
 					require.Equal(t, i, state.ContinuationBurst)
 				}
 				require.Eventually(t, func() bool { return accountConcurrency(t, ctx, f.cache) == 0 }, time.Second, time.Millisecond, "达到两次后轮末让出")
+				for range 3 {
+					ok, err := f.cache.IncrementAccountContinuationWaitCount(ctx, 801, 100)
+					require.NoError(t, err)
+					require.True(t, ok)
+				}
 				require.NoError(t, f.conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"after-yield"}`)))
 				require.Eventually(t, func() bool {
 					n, err := f.cache.GetAccountContinuationWaitingCount(ctx, 801)
-					return err == nil && n == 1
-				}, time.Second, time.Millisecond, "第三次续聊不能快抢绕过")
+					return err == nil && n == 4
+				}, time.Second, time.Millisecond, "让槽后的续聊可超过粘性阈值入队，仍须等待新会话获槽")
 				select {
 				case <-f.requests:
 					t.Fatal("续聊在新会话之前到达上游")
@@ -56,6 +61,13 @@ func TestContinuationBurstWSTurnsYieldAndResume(t *testing.T) {
 				require.NoError(t, err, "同一 WS 连接继续工作")
 				require.Contains(t, string(body), "response.completed")
 				<-f.requests
+				for range 3 {
+					require.NoError(t, f.cache.DecrementAccountContinuationWaitCount(ctx, 801))
+				}
+				require.Eventually(t, func() bool {
+					n, err := f.cache.GetAccountContinuationWaitingCount(ctx, 801)
+					return err == nil && n == 0
+				}, time.Second, time.Millisecond)
 			})
 		}
 	}

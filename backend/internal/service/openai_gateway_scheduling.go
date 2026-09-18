@@ -1783,14 +1783,14 @@ func (s *OpenAIGatewayService) hasContinuationWaiters(ctx context.Context, accou
 
 // stickyWaitPlanFor 按请求的续聊资格给粘性 / previous_response 路径构造等待计划。
 // 类别、计数键、上限、超时四者必须一致：不合格的请求（回退种子哈希）虽然命中了共享绑定，
-// 也按新会话走旧键、100 人、30 秒，不能只把 Class 标成新会话却沿用续聊的 3 人、120 秒。
+// 也按新会话走旧键与兜底参数，不能只把 Class 标成新会话却沿用续聊的容量与超时。
 func stickyWaitPlanFor(cfg config.GatewaySchedulingConfig, account *Account, eligible bool) *AccountWaitPlan {
 	if eligible {
 		return &AccountWaitPlan{
 			AccountID:      account.ID,
 			MaxConcurrency: account.Concurrency,
 			Timeout:        cfg.StickySessionWaitTimeout,
-			MaxWaiting:     cfg.StickySessionMaxWaiting,
+			MaxWaiting:     cfg.ContinuationMaxWaiting,
 			Class:          AccountWaitClassContinuation,
 		}
 	}
@@ -1803,7 +1803,7 @@ func stickyWaitPlanFor(cfg config.GatewaySchedulingConfig, account *Account, eli
 	}
 }
 
-// stickyWaitQueueHasRoom 判断粘性账号上与资格对应的那条队列是否还有名额；读失败按有名额处理，交给 handler 入队时再判。
+// stickyWaitQueueHasRoom 检查粘性分流阈值及实际队列容量；读失败交给 handler 入队时再判。
 func (s *OpenAIGatewayService) stickyWaitQueueHasRoom(ctx context.Context, accountID int64, eligible bool) bool {
 	if s == nil || s.concurrencyService == nil {
 		return true
@@ -1811,7 +1811,7 @@ func (s *OpenAIGatewayService) stickyWaitQueueHasRoom(ctx context.Context, accou
 	cfg := s.schedulingConfig()
 	if eligible {
 		waiting, err := s.concurrencyService.GetAccountContinuationWaitingCount(ctx, accountID)
-		return err != nil || waiting < cfg.StickySessionMaxWaiting
+		return err != nil || waiting < min(cfg.StickySessionMaxWaiting, cfg.ContinuationMaxWaiting)
 	}
 	waiting, err := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
 	return err != nil || waiting < cfg.FallbackMaxWaiting
@@ -1822,6 +1822,7 @@ func (s *OpenAIGatewayService) schedulingConfig() config.GatewaySchedulingConfig
 		return s.cfg.Gateway.Scheduling
 	}
 	return config.GatewaySchedulingConfig{
+		ContinuationMaxWaiting:   100,
 		StickySessionMaxWaiting:  3,
 		StickySessionWaitTimeout: 45 * time.Second,
 		FallbackWaitTimeout:      30 * time.Second,

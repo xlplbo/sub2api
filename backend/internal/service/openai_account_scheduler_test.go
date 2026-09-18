@@ -226,6 +226,7 @@ func newSchedulerTestOpenAIWSV2Config() *config.Config {
 	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
 	cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds = 3600
 	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 120 * time.Second
+	cfg.Gateway.Scheduling.ContinuationMaxWaiting = 100
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 3
 	cfg.Gateway.Scheduling.FallbackWaitTimeout = 30 * time.Second
 	cfg.Gateway.Scheduling.FallbackMaxWaiting = 100
@@ -2225,6 +2226,7 @@ func newPreviousResponseSchedulerFixture(t *testing.T) (int64, Account, *config.
 	cfg.Gateway.OpenAIWS.StickySessionTTLSeconds = 1800
 	cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds = 3600
 	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 120 * time.Second
+	cfg.Gateway.Scheduling.ContinuationMaxWaiting = 100
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 3
 	cfg.Gateway.Scheduling.FallbackWaitTimeout = 30 * time.Second
 	cfg.Gateway.Scheduling.FallbackMaxWaiting = 100
@@ -2390,6 +2392,7 @@ func newStickyBusySchedulerFixture(t *testing.T) (int64, []Account, *config.Conf
 		},
 	}
 	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.ContinuationMaxWaiting = 100
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 2
 	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 45 * time.Second
 	cfg.Gateway.Scheduling.FallbackWaitTimeout = 30 * time.Second
@@ -2696,6 +2699,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyEscape
 	cfg.Gateway.OpenAIScheduler.StickyEscapeEnabled = true
 	cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs = 15000
 	cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate = 0.5
+	cfg.Gateway.Scheduling.ContinuationMaxWaiting = 100
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 2
 	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 45 * time.Second
 	concurrencyCache := schedulerTestConcurrencyCache{
@@ -2739,6 +2743,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeDisa
 	cfg.Gateway.OpenAIScheduler.StickyEscapeEnabled = false
 	cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs = 15000
 	cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate = 0.5
+	cfg.Gateway.Scheduling.ContinuationMaxWaiting = 100
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 2
 	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 45 * time.Second
 	concurrencyCache := schedulerTestConcurrencyCache{
@@ -4036,7 +4041,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyFullWaitsReturnsP
 	require.NotContains(t, acquired, int64(21002))
 }
 
-func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyFullWaitsSpillsWhenContinuationQueueFull(t *testing.T) {
+func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyFullWaitsSpillsAtStickyThreshold(t *testing.T) {
 	groupID, accounts, cfg := newStickyBusySchedulerFixture(t)
 	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_queue_full": 21001}}
 	svc := newStickyFullWaitsService(t, accounts, cfg, cache, schedulerTestConcurrencyCache{
@@ -4048,7 +4053,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyFullWaitsSpillsWh
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.True(t, selection.Acquired)
-	require.Equal(t, int64(21002), selection.Account.ID, "续聊队列满时溢出到负载层")
+	require.Equal(t, int64(21002), selection.Account.ID, "达到粘性分流阈值时溢出到负载层")
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.False(t, decision.StickySessionHit)
 	require.Equal(t, int64(21001), cache.sessionBindings["openai:session_hash_queue_full"], "溢出不改写绑定")
@@ -4069,7 +4074,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_HTTPDefaultStillEscapes
 	require.Equal(t, int64(21001), cache.sessionBindings["openai:session_hash_http_escape"])
 }
 
-func TestSelectBySessionHash_StickyFullWaitsQueueFullHonorsDisabledEscape(t *testing.T) {
+func TestSelectBySessionHash_StickyFullWaitsThresholdHonorsDisabledEscape(t *testing.T) {
 	groupID := int64(10130)
 	accounts := []Account{
 		{
@@ -4112,10 +4117,11 @@ func TestSelectBySessionHash_StickyFullWaitsQueueFullHonorsDisabledEscape(t *tes
 	t.Run("escape disabled keeps waiting on the owner", func(t *testing.T) {
 		selection, escaped, err := scheduler.selectBySessionHash(context.Background(), newRequest(true))
 		require.NoError(t, err)
-		require.False(t, escaped, "任务属主锁定时队列满也不得溢出")
+		require.False(t, escaped, "任务属主锁定时达到粘性阈值也不得溢出")
 		require.NotNil(t, selection)
 		require.NotNil(t, selection.WaitPlan)
 		require.Equal(t, int64(21301), selection.WaitPlan.AccountID)
+		require.Equal(t, 100, selection.WaitPlan.MaxWaiting)
 		require.Equal(t, AccountWaitClassContinuation, selection.WaitPlan.Class)
 	})
 
@@ -4288,7 +4294,7 @@ func TestTryFallbackToWeightedSticky_WaitPlanFollowsRequestEligibility(t *testin
 		wantTimeout    time.Duration
 		wantMaxWaiting int
 	}{
-		{"continuation", true, AccountWaitClassContinuation, cfg.Gateway.Scheduling.StickySessionWaitTimeout, cfg.Gateway.Scheduling.StickySessionMaxWaiting},
+		{"continuation", true, AccountWaitClassContinuation, cfg.Gateway.Scheduling.StickySessionWaitTimeout, cfg.Gateway.Scheduling.ContinuationMaxWaiting},
 		{"new session", false, AccountWaitClassNewSession, cfg.Gateway.Scheduling.FallbackWaitTimeout, cfg.Gateway.Scheduling.FallbackMaxWaiting},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -50,11 +50,12 @@ func TestOpenAIWSAccountWaitPlanIsContinuationClass(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.Scheduling.StickySessionWaitTimeout = 120 * time.Second
 	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 3
+	cfg.Gateway.Scheduling.ContinuationMaxWaiting = 100
 	svc := &OpenAIGatewayService{cfg: cfg}
 	plan := svc.OpenAIWSAccountWaitPlan(&Account{ID: 31, Concurrency: 2})
 	require.Equal(t, AccountWaitClassContinuation, plan.Class)
 	require.Equal(t, int64(31), plan.AccountID)
-	require.Equal(t, 3, plan.MaxWaiting)
+	require.Equal(t, 100, plan.MaxWaiting)
 }
 
 func TestAccountWaitClassString(t *testing.T) {

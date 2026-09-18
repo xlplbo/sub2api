@@ -576,7 +576,7 @@ const (
 	AccountWaitClassLegacy AccountWaitClass = iota
 	// AccountWaitClassNewSession 走旧计数键与回退上限，续聊达到连续准入限额时优先。
 	AccountWaitClassNewSession
-	// AccountWaitClassContinuation 走续聊计数键与粘性上限，受账号连续准入限额约束。
+	// AccountWaitClassContinuation 走续聊计数键与独立续聊容量，受账号连续准入限额约束。
 	AccountWaitClassContinuation
 )
 

@@ -93,6 +93,7 @@ func TestContinuationBurstSchedulerEntryPoints(t *testing.T) {
 					require.False(t, result.Acquired, "原子准入拒绝后必须等待，不能绕过")
 					require.NotNil(t, result.WaitPlan)
 					require.Equal(t, want, result.WaitPlan.Class)
+					require.Equal(t, 100, result.WaitPlan.MaxWaiting)
 					require.NotEmpty(t, cache.classes)
 					for i, class := range cache.classes {
 						require.Equal(t, want, class)
@@ -128,6 +129,7 @@ func TestContinuationBurstPreviousResponseEntry(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, selection.Acquired)
 			require.Equal(t, AccountWaitClassContinuation, selection.WaitPlan.Class)
+			require.Equal(t, 100, selection.WaitPlan.MaxWaiting)
 			require.Equal(t, []AccountWaitClass{AccountWaitClassContinuation}, cache.classes)
 			require.Equal(t, []int{2}, cache.limits)
 		})
