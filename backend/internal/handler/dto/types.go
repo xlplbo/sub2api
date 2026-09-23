@@ -170,6 +170,9 @@ type AdminGroup struct {
 	ForceOpenAIFast bool `json:"force_openai_fast"`
 	// FreeOpenAIFast 是管理端计费策略，用户侧分组 DTO 无需暴露。
 	FreeOpenAIFast bool `json:"free_openai_fast"`
+	// CodexCLIOnly / CodexCLIOnlyAllowAppServer 是管理端准入策略，用户侧分组 DTO 无需暴露。
+	CodexCLIOnly               bool `json:"codex_cli_only"`
+	CodexCLIOnlyAllowAppServer bool `json:"codex_cli_only_allow_app_server"`
 
 	// 分组利润控制（五个 token 平台分组可启用；margin/buffer 为小数存储）。
 	// 仅管理员可见：这三个字段与同响应中的 rate_multiplier 相乘即可反推出

@@ -732,6 +732,34 @@ func (_c *GroupCreate) SetNillableFreeOpenaiFast(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetCodexCliOnly sets the "codex_cli_only" field.
+func (_c *GroupCreate) SetCodexCliOnly(v bool) *GroupCreate {
+	_c.mutation.SetCodexCliOnly(v)
+	return _c
+}
+
+// SetNillableCodexCliOnly sets the "codex_cli_only" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableCodexCliOnly(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetCodexCliOnly(*v)
+	}
+	return _c
+}
+
+// SetCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field.
+func (_c *GroupCreate) SetCodexCliOnlyAllowAppServer(v bool) *GroupCreate {
+	_c.mutation.SetCodexCliOnlyAllowAppServer(v)
+	return _c
+}
+
+// SetNillableCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableCodexCliOnlyAllowAppServer(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetCodexCliOnlyAllowAppServer(*v)
+	}
+	return _c
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_c *GroupCreate) SetRequireOauthOnly(v bool) *GroupCreate {
 	_c.mutation.SetRequireOauthOnly(v)
@@ -1159,6 +1187,14 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultFreeOpenaiFast
 		_c.mutation.SetFreeOpenaiFast(v)
 	}
+	if _, ok := _c.mutation.CodexCliOnly(); !ok {
+		v := group.DefaultCodexCliOnly
+		_c.mutation.SetCodexCliOnly(v)
+	}
+	if _, ok := _c.mutation.CodexCliOnlyAllowAppServer(); !ok {
+		v := group.DefaultCodexCliOnlyAllowAppServer
+		_c.mutation.SetCodexCliOnlyAllowAppServer(v)
+	}
 	if _, ok := _c.mutation.RequireOauthOnly(); !ok {
 		v := group.DefaultRequireOauthOnly
 		_c.mutation.SetRequireOauthOnly(v)
@@ -1363,6 +1399,12 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.FreeOpenaiFast(); !ok {
 		return &ValidationError{Name: "free_openai_fast", err: errors.New(`ent: missing required field "Group.free_openai_fast"`)}
+	}
+	if _, ok := _c.mutation.CodexCliOnly(); !ok {
+		return &ValidationError{Name: "codex_cli_only", err: errors.New(`ent: missing required field "Group.codex_cli_only"`)}
+	}
+	if _, ok := _c.mutation.CodexCliOnlyAllowAppServer(); !ok {
+		return &ValidationError{Name: "codex_cli_only_allow_app_server", err: errors.New(`ent: missing required field "Group.codex_cli_only_allow_app_server"`)}
 	}
 	if _, ok := _c.mutation.RequireOauthOnly(); !ok {
 		return &ValidationError{Name: "require_oauth_only", err: errors.New(`ent: missing required field "Group.require_oauth_only"`)}
@@ -1656,6 +1698,14 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
 		_node.FreeOpenaiFast = value
+	}
+	if value, ok := _c.mutation.CodexCliOnly(); ok {
+		_spec.SetField(group.FieldCodexCliOnly, field.TypeBool, value)
+		_node.CodexCliOnly = value
+	}
+	if value, ok := _c.mutation.CodexCliOnlyAllowAppServer(); ok {
+		_spec.SetField(group.FieldCodexCliOnlyAllowAppServer, field.TypeBool, value)
+		_node.CodexCliOnlyAllowAppServer = value
 	}
 	if value, ok := _c.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
@@ -2744,6 +2794,30 @@ func (u *GroupUpsert) SetFreeOpenaiFast(v bool) *GroupUpsert {
 // UpdateFreeOpenaiFast sets the "free_openai_fast" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateFreeOpenaiFast() *GroupUpsert {
 	u.SetExcluded(group.FieldFreeOpenaiFast)
+	return u
+}
+
+// SetCodexCliOnly sets the "codex_cli_only" field.
+func (u *GroupUpsert) SetCodexCliOnly(v bool) *GroupUpsert {
+	u.Set(group.FieldCodexCliOnly, v)
+	return u
+}
+
+// UpdateCodexCliOnly sets the "codex_cli_only" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCodexCliOnly() *GroupUpsert {
+	u.SetExcluded(group.FieldCodexCliOnly)
+	return u
+}
+
+// SetCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field.
+func (u *GroupUpsert) SetCodexCliOnlyAllowAppServer(v bool) *GroupUpsert {
+	u.Set(group.FieldCodexCliOnlyAllowAppServer, v)
+	return u
+}
+
+// UpdateCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCodexCliOnlyAllowAppServer() *GroupUpsert {
+	u.SetExcluded(group.FieldCodexCliOnlyAllowAppServer)
 	return u
 }
 
@@ -3995,6 +4069,34 @@ func (u *GroupUpsertOne) SetFreeOpenaiFast(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateFreeOpenaiFast() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateFreeOpenaiFast()
+	})
+}
+
+// SetCodexCliOnly sets the "codex_cli_only" field.
+func (u *GroupUpsertOne) SetCodexCliOnly(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexCliOnly(v)
+	})
+}
+
+// UpdateCodexCliOnly sets the "codex_cli_only" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCodexCliOnly() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexCliOnly()
+	})
+}
+
+// SetCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field.
+func (u *GroupUpsertOne) SetCodexCliOnlyAllowAppServer(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexCliOnlyAllowAppServer(v)
+	})
+}
+
+// UpdateCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCodexCliOnlyAllowAppServer() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexCliOnlyAllowAppServer()
 	})
 }
 
@@ -5441,6 +5543,34 @@ func (u *GroupUpsertBulk) SetFreeOpenaiFast(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateFreeOpenaiFast() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateFreeOpenaiFast()
+	})
+}
+
+// SetCodexCliOnly sets the "codex_cli_only" field.
+func (u *GroupUpsertBulk) SetCodexCliOnly(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexCliOnly(v)
+	})
+}
+
+// UpdateCodexCliOnly sets the "codex_cli_only" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCodexCliOnly() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexCliOnly()
+	})
+}
+
+// SetCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field.
+func (u *GroupUpsertBulk) SetCodexCliOnlyAllowAppServer(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexCliOnlyAllowAppServer(v)
+	})
+}
+
+// UpdateCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCodexCliOnlyAllowAppServer() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexCliOnlyAllowAppServer()
 	})
 }
 
