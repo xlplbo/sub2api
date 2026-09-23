@@ -85,19 +85,24 @@ func NewOpenAICodexClientRestrictionDetector(cfg *config.Config) *OpenAICodexCli
 	return &OpenAICodexClientRestrictionDetector{cfg: cfg}
 }
 
-// Detect 门控顺序（每步可短路）：
-//  1. 账号未开 codex_cli_only → 不限制（Disabled）。
-//  2. gateway.force_codex_cli → 全局旁路放行（ForceCodexCLI）。
-//  3. 黑名单命中 → 立即拒（门内 deny 最先，OR 语义）。
-//  4. 身份候选：官方 UA / 官方 originator / 全局白名单 / App Server 开闸（全局开关 OR 账号开关）；都不命中 → 拒（NotMatchedUA）。
-//  5. Codex 版本（仅官方候选）：版本必须可解析（否则 VersionUndetectable）；< Min → 拒（TooLow）；> Max → 拒（TooHigh）。
-//  6. 引擎指纹 AND 硬门：按 EngineFingerprintSignals 列表勾选 AND 判定（无任何 Required 信号→放行，即「关闭指纹门」=取消所有勾选）；白名单条目可显式 skip。
+// Detect 门控顺序：账号未开 codex_cli_only → 不限制（Disabled）；
+// 其余步骤见 detectCodexOfficialClient（与分组级共用）。
 func (d *OpenAICodexClientRestrictionDetector) Detect(c *gin.Context, account *Account, policy CodexRestrictionPolicy, body []byte) CodexClientRestrictionDetectionResult {
 	if account == nil || !account.IsCodexCLIOnlyEnabled() {
 		return CodexClientRestrictionDetectionResult{Enabled: false, Matched: false, Reason: CodexClientRestrictionReasonDisabled}
 	}
+	forceCodexCLI := d != nil && d.cfg != nil && d.cfg.Gateway.ForceCodexCLI
+	return detectCodexOfficialClient(c, policy, body, forceCodexCLI, account.IsCodexCLIOnlyAppServerAllowed())
+}
 
-	if d != nil && d.cfg != nil && d.cfg.Gateway.ForceCodexCLI {
+// detectCodexOfficialClient 是账号级与分组级 codex_cli_only 共用的判定主体，门控顺序（每步可短路）：
+//  2. gateway.force_codex_cli → 全局旁路放行（ForceCodexCLI）。
+//  3. 黑名单命中 → 立即拒（门内 deny 最先，OR 语义）。
+//  4. 身份候选：官方 UA / 官方 originator / 全局白名单 / App Server 开闸（全局开关 OR 账号/分组开关）；都不命中 → 拒（NotMatchedUA）。
+//  5. Codex 版本（仅官方候选）：版本必须可解析（否则 VersionUndetectable）；< Min → 拒（TooLow）；> Max → 拒（TooHigh）。
+//  6. 引擎指纹 AND 硬门：按 EngineFingerprintSignals 列表勾选 AND 判定（无任何 Required 信号→放行，即「关闭指纹门」=取消所有勾选）；白名单条目可显式 skip。
+func detectCodexOfficialClient(c *gin.Context, policy CodexRestrictionPolicy, body []byte, forceCodexCLI, appServerAllowed bool) CodexClientRestrictionDetectionResult {
+	if forceCodexCLI {
 		return CodexClientRestrictionDetectionResult{Enabled: true, Matched: true, Reason: CodexClientRestrictionReasonForceCodexCLI}
 	}
 
@@ -117,7 +122,7 @@ func (d *OpenAICodexClientRestrictionDetector) Detect(c *gin.Context, account *A
 		return CodexClientRestrictionDetectionResult{Enabled: true, Matched: false, Reason: CodexClientRestrictionReasonBlacklisted}
 	}
 
-	// 4. 身份候选（优先级：官方 > 全局白名单 > App Server 开闸：全局开关 OR 账号开关）。
+	// 4. 身份候选（优先级：官方 > 全局白名单 > App Server 开闸：全局开关 OR 账号/分组开关）。
 	reason := ""
 	skipFingerprint := false
 	switch {
@@ -129,7 +134,7 @@ func (d *OpenAICodexClientRestrictionDetector) Detect(c *gin.Context, account *A
 		if entry, ok := openai.MatchClientEntry(userAgent, originator, policy.Whitelist); ok {
 			reason = CodexClientRestrictionReasonMatchedWhitelistClient
 			skipFingerprint = entry.SkipEngineFingerprint
-		} else if policy.AllowAppServerClients || account.IsCodexCLIOnlyAppServerAllowed() {
+		} else if policy.AllowAppServerClients || appServerAllowed {
 			reason = CodexClientRestrictionReasonMatchedAppServerClient
 		}
 	}
