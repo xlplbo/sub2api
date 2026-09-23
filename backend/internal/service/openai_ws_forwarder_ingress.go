@@ -89,6 +89,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
 		return err
 	}
+	// 与 HTTP Forward 同一道 codex_cli_only 门：客户端身份在握手时即固定，
+	// 按本次转发的账号与首帧判定一次；换号重入时对新账号重新判定。
+	restrictionResult := s.detectCodexClientRestriction(c, account, firstClientMessage)
+	logCodexCLIOnlyDetection(ctx, c, account, getAPIKeyIDFromContext(c), restrictionResult, firstClientMessage)
+	if restrictionResult.Enabled && !restrictionResult.Matched {
+		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, CodexClientRestrictionMessage(restrictionResult), ErrCodexClientRestricted)
+	}
 	if err := validateOpenAIWSBearerToken(account, token); err != nil {
 		return err
 	}
@@ -1367,6 +1375,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	rejectedFieldRetryState = newOpenAIResponsesRejectedFieldRetryState(currentPayload)
 	turnRetry := 0
 	turnPrevRecoveryTried := false
+	turnAgeRotated := false
 	lastTurnFinishedAt := time.Time{}
 	lastTurnResponseID := ""
 	lastTurnWindowID := ""
@@ -1773,6 +1782,54 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				unpinSessionConn(sessionConnID)
 			}
 		}
+		// 上游对单条 WS 连接有 60 分钟硬上限，会话持有的连接到龄后在轮次边界主动换连，
+		// 避免下一轮开头或中途被上游以 websocket_connection_limit_reached 切断。
+		// store=false 的续链状态只存在于当前连接，换连须去掉 previous_response_id 并重放完整历史；
+		// 重放上下文不完整时不换连，留给上游到期拒绝、由客户端自行重连。
+		if turn > 1 && sessionLease != nil && !turnAgeRotated {
+			if connAge := sessionLease.Age(time.Now()); connAge >= openAIWSConnMaxAge {
+				turnAgeRotated = true
+				rotateAction := "reconnect"
+				rotateSkipReason := "replay_payload_not_applied"
+				if forcePreferredConn {
+					rotateAction = ""
+					if !currentTurnAccountFailoverHistoryComplete || !currentTurnAccountFailoverInputExists {
+						rotateSkipReason = "incomplete_history"
+					} else if hasFunctionCallOutput && !openAIWSRawItemsHaveToolCallContextForOutputs(currentTurnAccountFailoverInput) {
+						rotateSkipReason = "function_call_output_missing_replay_context"
+					} else {
+						if updatedPayload, removed, dropErr := dropPreviousResponseIDFromRawPayload(currentPayload); dropErr == nil && removed {
+							if updatedWithInput, setInputErr := setOpenAIWSPayloadInputSequence(updatedPayload, currentTurnAccountFailoverInput, currentTurnAccountFailoverInputExists); setInputErr == nil {
+								currentPayload = updatedWithInput
+								currentPayloadBytes = len(updatedWithInput)
+								rotateAction = "drop_previous_response_id_reconnect"
+							}
+						}
+					}
+				}
+				if rotateAction != "" {
+					logOpenAIWSModeInfo(
+						"ingress_ws_conn_age_rotate account_id=%d turn=%d conn_id=%s age_ms=%d action=%s",
+						account.ID,
+						turn,
+						truncateOpenAIWSLogValue(sessionConnID, openAIWSIDValueMaxLen),
+						connAge.Milliseconds(),
+						rotateAction,
+					)
+					resetSessionLease(true)
+					skipBeforeTurn = true
+					continue
+				}
+				logOpenAIWSModeInfo(
+					"ingress_ws_conn_age_rotate_skip account_id=%d turn=%d conn_id=%s age_ms=%d reason=%s",
+					account.ID,
+					turn,
+					truncateOpenAIWSLogValue(sessionConnID, openAIWSIDValueMaxLen),
+					connAge.Milliseconds(),
+					rotateSkipReason,
+				)
+			}
+		}
 		shouldPreflightPing := turn > 1 && sessionLease != nil && sessionLease.SupportsIdlePingWithoutReader() && turnRetry == 0
 		if shouldPreflightPing && openAIWSIngressPreflightPingIdle > 0 && !lastTurnFinishedAt.IsZero() {
 			if time.Since(lastTurnFinishedAt) < openAIWSIngressPreflightPingIdle {
@@ -1935,6 +1992,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		turnRetry = 0
 		turnPrevRecoveryTried = false
+		turnAgeRotated = false
 		lastTurnFinishedAt = time.Now()
 		lastTurnClean = true
 		if hooks != nil && hooks.AfterTurn != nil {
