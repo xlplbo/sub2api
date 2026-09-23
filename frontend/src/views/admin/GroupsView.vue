@@ -1593,6 +1593,42 @@
           </p>
         </div>
 
+        <!-- 仅允许 Codex 官方客户端（仅 OpenAI 平台） -->
+        <div
+          v-if="supportsGroupCodexCLIOnly(createForm.platform)"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <label class="input-label mb-0">{{ t("admin.groups.codexCliOnly.title") }}</label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.codexCliOnly.hint") }}
+              </p>
+            </div>
+            <Toggle
+              data-testid="create-codex-cli-only"
+              :aria-label="t('admin.groups.codexCliOnly.title')"
+              v-model="createForm.codex_cli_only"
+            />
+          </div>
+          <div
+            v-if="createForm.codex_cli_only"
+            class="mt-4 flex items-center justify-between gap-4 border-l-2 border-gray-200 pl-4 dark:border-dark-600"
+          >
+            <div>
+              <label class="input-label mb-0">{{ t("admin.groups.codexCliOnly.allowAppServer") }}</label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.codexCliOnly.allowAppServerHint") }}
+              </p>
+            </div>
+            <Toggle
+              data-testid="create-codex-cli-only-allow-app-server"
+              :aria-label="t('admin.groups.codexCliOnly.allowAppServer')"
+              v-model="createForm.codex_cli_only_allow_app_server"
+            />
+          </div>
+        </div>
+
         <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
         <div
           v-if="supportsLivePlatform(createForm.platform)"
@@ -3243,6 +3279,42 @@
           </p>
         </div>
 
+        <!-- 仅允许 Codex 官方客户端（仅 OpenAI 平台） -->
+        <div
+          v-if="supportsGroupCodexCLIOnly(editForm.platform)"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <label class="input-label mb-0">{{ t("admin.groups.codexCliOnly.title") }}</label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.codexCliOnly.hint") }}
+              </p>
+            </div>
+            <Toggle
+              data-testid="edit-codex-cli-only"
+              :aria-label="t('admin.groups.codexCliOnly.title')"
+              v-model="editForm.codex_cli_only"
+            />
+          </div>
+          <div
+            v-if="editForm.codex_cli_only"
+            class="mt-4 flex items-center justify-between gap-4 border-l-2 border-gray-200 pl-4 dark:border-dark-600"
+          >
+            <div>
+              <label class="input-label mb-0">{{ t("admin.groups.codexCliOnly.allowAppServer") }}</label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.codexCliOnly.allowAppServerHint") }}
+              </p>
+            </div>
+            <Toggle
+              data-testid="edit-codex-cli-only-allow-app-server"
+              :aria-label="t('admin.groups.codexCliOnly.allowAppServer')"
+              v-model="editForm.codex_cli_only_allow_app_server"
+            />
+          </div>
+        </div>
+
         <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
         <div
           v-if="supportsLivePlatform(editForm.platform)"
@@ -4334,6 +4406,10 @@ import {
   supportsGroupOpenAIFast,
 } from "./groupsOpenAIFast";
 import {
+  normalizeGroupCodexCLIOnly,
+  supportsGroupCodexCLIOnly,
+} from "./groupsCodexCLIOnly";
+import {
   addCustomModelAllowlistItem,
   buildModelAllowlistConfig,
   createModelAllowlistState as createInitialModelAllowlistState,
@@ -4950,6 +5026,8 @@ const createForm = reactive({
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
+  codex_cli_only: false,
+  codex_cli_only_allow_app_server: false,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -5315,6 +5393,8 @@ const editForm = reactive({
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
+  codex_cli_only: false,
+  codex_cli_only_allow_app_server: false,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -5792,6 +5872,8 @@ const closeCreateModal = () => {
   createForm.long_context_pricing_enabled = true;
   createForm.force_openai_fast = false;
   createForm.free_openai_fast = false;
+  createForm.codex_cli_only = false;
+  createForm.codex_cli_only_allow_app_server = false;
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
@@ -5920,6 +6002,11 @@ const handleCreateGroup = async () => {
       free_openai_fast: normalizeGroupOpenAIFast(
         createForm.platform,
         createForm.free_openai_fast,
+      ),
+      ...normalizeGroupCodexCLIOnly(
+        createForm.platform,
+        createForm.codex_cli_only,
+        createForm.codex_cli_only_allow_app_server,
       ),
       model_pricing: groupPricingToAPI(
         createForm.model_pricing,
@@ -6060,6 +6147,9 @@ const handleEdit = async (group: AdminGroup) => {
     group.long_context_pricing_enabled ?? true;
   editForm.force_openai_fast = group.force_openai_fast ?? false;
   editForm.free_openai_fast = group.free_openai_fast ?? false;
+  editForm.codex_cli_only = group.codex_cli_only ?? false;
+  editForm.codex_cli_only_allow_app_server =
+    group.codex_cli_only_allow_app_server ?? false;
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
   editForm.allow_image_generation = group.allow_image_generation ?? false;
   editForm.allow_batch_image_generation =
@@ -6194,6 +6284,8 @@ const closeEditModal = () => {
   editForm.long_context_pricing_enabled = true;
   editForm.force_openai_fast = false;
   editForm.free_openai_fast = false;
+  editForm.codex_cli_only = false;
+  editForm.codex_cli_only_allow_app_server = false;
   editForm.model_pricing = [];
   editForm.web_search_price_per_call = null;
   editForm.search_price_per_1k = null;
@@ -6256,6 +6348,11 @@ const handleUpdateGroup = async () => {
       free_openai_fast: normalizeGroupOpenAIFast(
         editForm.platform,
         editForm.free_openai_fast,
+      ),
+      ...normalizeGroupCodexCLIOnly(
+        editForm.platform,
+        editForm.codex_cli_only,
+        editForm.codex_cli_only_allow_app_server,
       ),
       model_pricing: groupPricingToAPI(
         editForm.model_pricing,

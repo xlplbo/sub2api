@@ -122,6 +122,10 @@ const (
 	FieldForceOpenaiFast = "force_openai_fast"
 	// FieldFreeOpenaiFast holds the string denoting the free_openai_fast field in the database.
 	FieldFreeOpenaiFast = "free_openai_fast"
+	// FieldCodexCliOnly holds the string denoting the codex_cli_only field in the database.
+	FieldCodexCliOnly = "codex_cli_only"
+	// FieldCodexCliOnlyAllowAppServer holds the string denoting the codex_cli_only_allow_app_server field in the database.
+	FieldCodexCliOnlyAllowAppServer = "codex_cli_only_allow_app_server"
 	// FieldRequireOauthOnly holds the string denoting the require_oauth_only field in the database.
 	FieldRequireOauthOnly = "require_oauth_only"
 	// FieldRequirePrivacySet holds the string denoting the require_privacy_set field in the database.
@@ -276,6 +280,8 @@ var Columns = []string{
 	FieldAllowLive,
 	FieldForceOpenaiFast,
 	FieldFreeOpenaiFast,
+	FieldCodexCliOnly,
+	FieldCodexCliOnlyAllowAppServer,
 	FieldRequireOauthOnly,
 	FieldRequirePrivacySet,
 	FieldDefaultMappedModel,
@@ -402,6 +408,10 @@ var (
 	DefaultForceOpenaiFast bool
 	// DefaultFreeOpenaiFast holds the default value on creation for the "free_openai_fast" field.
 	DefaultFreeOpenaiFast bool
+	// DefaultCodexCliOnly holds the default value on creation for the "codex_cli_only" field.
+	DefaultCodexCliOnly bool
+	// DefaultCodexCliOnlyAllowAppServer holds the default value on creation for the "codex_cli_only_allow_app_server" field.
+	DefaultCodexCliOnlyAllowAppServer bool
 	// DefaultRequireOauthOnly holds the default value on creation for the "require_oauth_only" field.
 	DefaultRequireOauthOnly bool
 	// DefaultRequirePrivacySet holds the default value on creation for the "require_privacy_set" field.
@@ -687,6 +697,16 @@ func ByForceOpenaiFast(opts ...sql.OrderTermOption) OrderOption {
 // ByFreeOpenaiFast orders the results by the free_openai_fast field.
 func ByFreeOpenaiFast(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFreeOpenaiFast, opts...).ToFunc()
+}
+
+// ByCodexCliOnly orders the results by the codex_cli_only field.
+func ByCodexCliOnly(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodexCliOnly, opts...).ToFunc()
+}
+
+// ByCodexCliOnlyAllowAppServer orders the results by the codex_cli_only_allow_app_server field.
+func ByCodexCliOnlyAllowAppServer(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodexCliOnlyAllowAppServer, opts...).ToFunc()
 }
 
 // ByRequireOauthOnly orders the results by the require_oauth_only field.

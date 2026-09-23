@@ -102,6 +102,8 @@ type Group struct {
 	AllowLive                   bool
 	ForceOpenAIFast             bool // 强制 OpenAI 网关请求使用 service_tier=priority
 	FreeOpenAIFast              bool // OpenAI Fast 请求按 Standard 价格向用户计费
+	CodexCLIOnly                bool // 全部网关请求须来自 Codex 官方客户端（仅 openai 平台）
+	CodexCLIOnlyAllowAppServer  bool // CodexCLIOnly 开启时额外放行 Codex app-server 客户端（仍受引擎指纹门约束）
 	RequireOAuthOnly            bool // 仅允许非 apikey 类型账号关联（OpenAI/Antigravity/Anthropic/Gemini）
 	RequirePrivacySet           bool // 调度时仅允许 privacy 已成功设置的账号（OpenAI/Antigravity/Anthropic/Gemini）
 	DefaultMappedModel          string

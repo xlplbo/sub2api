@@ -248,6 +248,12 @@ func (Group) Fields() []ent.Field {
 		field.Bool("free_openai_fast").
 			Default(false).
 			Comment("是否让此 OpenAI/Composite 分组的 Fast 请求按 Standard 价格计费"),
+		field.Bool("codex_cli_only").
+			Default(false).
+			Comment("是否要求此 OpenAI 分组的全部网关请求来自 Codex 官方客户端"),
+		field.Bool("codex_cli_only_allow_app_server").
+			Default(false).
+			Comment("codex_cli_only 开启时是否额外放行 Codex app-server 客户端（仍受引擎指纹门约束）"),
 		field.Bool("require_oauth_only").
 			Default(false).
 			Comment("仅允许非 apikey 类型账号关联到此分组"),

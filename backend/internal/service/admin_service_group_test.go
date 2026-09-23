@@ -1400,6 +1400,80 @@ func TestAdminService_UpdateGroup_ForceOpenAIFastInvalidatesAuthCache(t *testing
 	require.Equal(t, []int64{existingGroup.ID}, invalidator.groupIDs)
 }
 
+func TestAdminService_CreateGroup_NormalizesCodexCLIOnlyByPlatform(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		platform string
+		want     bool
+	}{
+		{name: "openai", platform: PlatformOpenAI, want: true},
+		{name: "composite", platform: PlatformComposite, want: false},
+		{name: "anthropic", platform: PlatformAnthropic, want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &groupRepoStubForAdmin{}
+			svc := &adminServiceImpl{groupRepo: repo}
+
+			_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+				Name: "codex-" + tt.name, Platform: tt.platform, RateMultiplier: 1, CodexCLIOnly: true, CodexCLIOnlyAllowAppServer: true,
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, repo.created.CodexCLIOnly)
+			require.Equal(t, tt.want, repo.created.CodexCLIOnlyAllowAppServer)
+		})
+	}
+}
+
+func TestAdminService_CreateGroup_CodexCLIOnlyAppServerRequiresMainSwitch(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name: "codex-app-server-only", Platform: PlatformOpenAI, RateMultiplier: 1, CodexCLIOnlyAllowAppServer: true,
+	})
+
+	require.NoError(t, err)
+	require.False(t, repo.created.CodexCLIOnly)
+	require.False(t, repo.created.CodexCLIOnlyAllowAppServer)
+}
+
+func TestAdminService_UpdateGroup_ClearsCodexCLIOnlyWhenPlatformChanges(t *testing.T) {
+	existingGroup := &Group{
+		ID: 1, Name: "existing-codex", Platform: PlatformOpenAI, Status: StatusActive, CodexCLIOnly: true, CodexCLIOnlyAllowAppServer: true,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	_, err := svc.UpdateGroup(context.Background(), existingGroup.ID, &UpdateGroupInput{
+		Platform: PlatformAnthropic,
+	})
+
+	require.NoError(t, err)
+	require.False(t, repo.updated.CodexCLIOnly)
+	require.False(t, repo.updated.CodexCLIOnlyAllowAppServer)
+}
+
+func TestAdminService_UpdateGroup_CodexCLIOnlyInvalidatesAuthCache(t *testing.T) {
+	existingGroup := &Group{
+		ID: 1, Name: "existing-codex", Platform: PlatformOpenAI, Status: StatusActive,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	invalidator := &authCacheInvalidatorStub{}
+	svc := &adminServiceImpl{groupRepo: repo, authCacheInvalidator: invalidator}
+	enabled := true
+
+	_, err := svc.UpdateGroup(context.Background(), existingGroup.ID, &UpdateGroupInput{
+		CodexCLIOnly:               &enabled,
+		CodexCLIOnlyAllowAppServer: &enabled,
+	})
+
+	require.NoError(t, err)
+	require.True(t, repo.updated.CodexCLIOnly)
+	require.True(t, repo.updated.CodexCLIOnlyAllowAppServer)
+	require.Equal(t, []int64{existingGroup.ID}, invalidator.groupIDs)
+}
+
 func TestAdminService_UpdateCompositeGroupPreservesLive(t *testing.T) {
 	existingGroup := &Group{
 		ID:       1,

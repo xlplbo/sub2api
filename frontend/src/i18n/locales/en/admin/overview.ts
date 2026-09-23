@@ -1268,6 +1268,12 @@ export default {
         free: 'Free Fast',
         freeHint: 'Fast requests in this group still use the priority tier, but customers are charged the equivalent Standard price.'
       },
+      codexCliOnly: {
+        title: 'Codex official clients only',
+        hint: 'Only applies to OpenAI groups. When enabled, every gateway entry of this group (including WebSocket, excluding model listing) only allows Codex official client families, together with the per-account switch of the same name; when disabled, the gateway bypasses this restriction and keeps existing behavior.',
+        allowAppServer: 'Allow Codex app-server clients',
+        allowAppServerHint: "Effective only when the switch above is on. When enabled, this group also allows third-party clients that embed the Codex engine over the app-server protocol (e.g. Claude Code's codex plugin); they still pass the global engine-fingerprint gate. OR-combined with the global app-server toggle."
+      },
       invalidRequestFallback: {
         title: 'Invalid Request Fallback Group',
         hint: 'Triggered only when upstream explicitly returns prompt too long. Leave empty to disable fallback.',
