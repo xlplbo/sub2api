@@ -184,7 +184,7 @@ func TestOpenAIWSHandshakeFailover(t *testing.T) {
 	}
 }
 
-func newOpenAIWSHandshakeTestClient(t *testing.T, repo service.AccountRepository, maxSwitches int) (*coderws.Conn, func()) {
+func newOpenAIWSHandshakeTestClient(t *testing.T, repo service.AccountRepository, maxSwitches int, configure ...func(*config.Config)) (*coderws.Conn, func()) {
 	t.Helper()
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	cfg.Default.RateMultiplier = 1
@@ -198,6 +198,9 @@ func newOpenAIWSHandshakeTestClient(t *testing.T, repo service.AccountRepository
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
 	cfg.Gateway.MaxAccountSwitches = maxSwitches
+	for _, fn := range configure {
+		fn(cfg)
+	}
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
 	gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, nil,
