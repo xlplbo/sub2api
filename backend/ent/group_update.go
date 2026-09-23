@@ -1023,6 +1023,34 @@ func (_u *GroupUpdate) SetNillableFreeOpenaiFast(v *bool) *GroupUpdate {
 	return _u
 }
 
+// SetCodexCliOnly sets the "codex_cli_only" field.
+func (_u *GroupUpdate) SetCodexCliOnly(v bool) *GroupUpdate {
+	_u.mutation.SetCodexCliOnly(v)
+	return _u
+}
+
+// SetNillableCodexCliOnly sets the "codex_cli_only" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableCodexCliOnly(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetCodexCliOnly(*v)
+	}
+	return _u
+}
+
+// SetCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field.
+func (_u *GroupUpdate) SetCodexCliOnlyAllowAppServer(v bool) *GroupUpdate {
+	_u.mutation.SetCodexCliOnlyAllowAppServer(v)
+	return _u
+}
+
+// SetNillableCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableCodexCliOnlyAllowAppServer(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetCodexCliOnlyAllowAppServer(*v)
+	}
+	return _u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_u *GroupUpdate) SetRequireOauthOnly(v bool) *GroupUpdate {
 	_u.mutation.SetRequireOauthOnly(v)
@@ -1872,6 +1900,12 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.CodexCliOnly(); ok {
+		_spec.SetField(group.FieldCodexCliOnly, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.CodexCliOnlyAllowAppServer(); ok {
+		_spec.SetField(group.FieldCodexCliOnlyAllowAppServer, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
@@ -3226,6 +3260,34 @@ func (_u *GroupUpdateOne) SetNillableFreeOpenaiFast(v *bool) *GroupUpdateOne {
 	return _u
 }
 
+// SetCodexCliOnly sets the "codex_cli_only" field.
+func (_u *GroupUpdateOne) SetCodexCliOnly(v bool) *GroupUpdateOne {
+	_u.mutation.SetCodexCliOnly(v)
+	return _u
+}
+
+// SetNillableCodexCliOnly sets the "codex_cli_only" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableCodexCliOnly(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetCodexCliOnly(*v)
+	}
+	return _u
+}
+
+// SetCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field.
+func (_u *GroupUpdateOne) SetCodexCliOnlyAllowAppServer(v bool) *GroupUpdateOne {
+	_u.mutation.SetCodexCliOnlyAllowAppServer(v)
+	return _u
+}
+
+// SetNillableCodexCliOnlyAllowAppServer sets the "codex_cli_only_allow_app_server" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableCodexCliOnlyAllowAppServer(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetCodexCliOnlyAllowAppServer(*v)
+	}
+	return _u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_u *GroupUpdateOne) SetRequireOauthOnly(v bool) *GroupUpdateOne {
 	_u.mutation.SetRequireOauthOnly(v)
@@ -4105,6 +4167,12 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.CodexCliOnly(); ok {
+		_spec.SetField(group.FieldCodexCliOnly, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.CodexCliOnlyAllowAppServer(); ok {
+		_spec.SetField(group.FieldCodexCliOnlyAllowAppServer, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)

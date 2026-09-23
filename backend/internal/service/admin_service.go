@@ -290,6 +290,8 @@ type CreateGroupInput struct {
 	AllowLive                   bool
 	ForceOpenAIFast             bool
 	FreeOpenAIFast              bool
+	CodexCLIOnly                bool
+	CodexCLIOnlyAllowAppServer  bool
 	DefaultMappedModel          string
 	RequireOAuthOnly            bool
 	RequirePrivacySet           bool
@@ -372,6 +374,8 @@ type UpdateGroupInput struct {
 	AllowLive                   *bool
 	ForceOpenAIFast             *bool
 	FreeOpenAIFast              *bool
+	CodexCLIOnly                *bool
+	CodexCLIOnlyAllowAppServer  *bool
 	DefaultMappedModel          *string
 	RequireOAuthOnly            *bool
 	RequirePrivacySet           *bool

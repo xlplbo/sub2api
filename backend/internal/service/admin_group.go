@@ -367,6 +367,20 @@ func sanitizeGroupOpenAIFast(group *Group) {
 	}
 }
 
+// sanitizeGroupCodexCLIOnly 清理非 openai 平台的 Codex 官方客户端限制，
+// 关闭主开关时一并关闭 app-server 放行，避免残留配置在切换平台或重开后意外生效。
+func sanitizeGroupCodexCLIOnly(group *Group) {
+	if group == nil {
+		return
+	}
+	if group.Platform != PlatformOpenAI {
+		group.CodexCLIOnly = false
+	}
+	if !group.CodexCLIOnly {
+		group.CodexCLIOnlyAllowAppServer = false
+	}
+}
+
 func normalizeCreateGroupInputForSimpleMode(input *CreateGroupInput) {
 	if input == nil {
 		return
@@ -617,6 +631,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		AllowLive:                       input.AllowLive,
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
 		FreeOpenAIFast:                  input.FreeOpenAIFast,
+		CodexCLIOnly:                    input.CodexCLIOnly,
+		CodexCLIOnlyAllowAppServer:      input.CodexCLIOnlyAllowAppServer,
 		RequireOAuthOnly:                input.RequireOAuthOnly,
 		RequirePrivacySet:               input.RequirePrivacySet,
 		DefaultMappedModel:              input.DefaultMappedModel,
@@ -632,6 +648,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	sanitizeGroupCodexCLIOnly(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
@@ -1006,6 +1023,12 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.FreeOpenAIFast != nil {
 		group.FreeOpenAIFast = *input.FreeOpenAIFast
 	}
+	if input.CodexCLIOnly != nil {
+		group.CodexCLIOnly = *input.CodexCLIOnly
+	}
+	if input.CodexCLIOnlyAllowAppServer != nil {
+		group.CodexCLIOnlyAllowAppServer = *input.CodexCLIOnlyAllowAppServer
+	}
 	if input.RequireOAuthOnly != nil {
 		group.RequireOAuthOnly = *input.RequireOAuthOnly
 	}
@@ -1054,6 +1077,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	sanitizeGroupCodexCLIOnly(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
