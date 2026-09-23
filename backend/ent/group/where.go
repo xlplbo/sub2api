@@ -300,6 +300,16 @@ func FreeOpenaiFast(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFreeOpenaiFast, v))
 }
 
+// CodexCliOnly applies equality check predicate on the "codex_cli_only" field. It's identical to CodexCliOnlyEQ.
+func CodexCliOnly(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCodexCliOnly, v))
+}
+
+// CodexCliOnlyAllowAppServer applies equality check predicate on the "codex_cli_only_allow_app_server" field. It's identical to CodexCliOnlyAllowAppServerEQ.
+func CodexCliOnlyAllowAppServer(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCodexCliOnlyAllowAppServer, v))
+}
+
 // RequireOauthOnly applies equality check predicate on the "require_oauth_only" field. It's identical to RequireOauthOnlyEQ.
 func RequireOauthOnly(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRequireOauthOnly, v))
@@ -2303,6 +2313,26 @@ func FreeOpenaiFastEQ(v bool) predicate.Group {
 // FreeOpenaiFastNEQ applies the NEQ predicate on the "free_openai_fast" field.
 func FreeOpenaiFastNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldFreeOpenaiFast, v))
+}
+
+// CodexCliOnlyEQ applies the EQ predicate on the "codex_cli_only" field.
+func CodexCliOnlyEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCodexCliOnly, v))
+}
+
+// CodexCliOnlyNEQ applies the NEQ predicate on the "codex_cli_only" field.
+func CodexCliOnlyNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldCodexCliOnly, v))
+}
+
+// CodexCliOnlyAllowAppServerEQ applies the EQ predicate on the "codex_cli_only_allow_app_server" field.
+func CodexCliOnlyAllowAppServerEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCodexCliOnlyAllowAppServer, v))
+}
+
+// CodexCliOnlyAllowAppServerNEQ applies the NEQ predicate on the "codex_cli_only_allow_app_server" field.
+func CodexCliOnlyAllowAppServerNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldCodexCliOnlyAllowAppServer, v))
 }
 
 // RequireOauthOnlyEQ applies the EQ predicate on the "require_oauth_only" field.
