@@ -105,6 +105,8 @@ type APIKeyAuthGroupSnapshot struct {
 	AllowLive                   bool                              `json:"allow_live"`
 	ForceOpenAIFast             bool                              `json:"force_openai_fast"`
 	FreeOpenAIFast              bool                              `json:"free_openai_fast"`
+	CodexCLIOnly                bool                              `json:"codex_cli_only"`
+	CodexCLIOnlyAllowAppServer  bool                              `json:"codex_cli_only_allow_app_server"`
 	DefaultMappedModel          string                            `json:"default_mapped_model,omitempty"`
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config,omitempty"`
 	ModelAllowlist              GroupModelAllowlist               `json:"model_allowlist,omitempty"`

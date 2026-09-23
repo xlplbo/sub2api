@@ -555,7 +555,7 @@ export default {
         codexHardeningTitle: 'Codex 设置',
         codexClientRestrictionTitle: 'Codex 客户端限制',
         codexHardeningDesc:
-          '仅对已开启「仅允许 Codex 官方客户端」的 OpenAI OAuth 账号生效（全局）。在 User-Agent/Originator 之外，用版本区间、引擎指纹门与黑/白名单巩固判定。',
+          '仅对已开启「仅允许 Codex 官方客户端」的 OpenAI OAuth 账号与 OpenAI 分组生效（全局）。在 User-Agent/Originator 之外，用版本区间、引擎指纹门与黑/白名单巩固判定。',
         minCodexVersion: '最低 Codex 版本',
         minCodexVersionPlaceholder: '例如 0.142.0',
         maxCodexVersion: '最高 Codex 版本',

@@ -562,7 +562,7 @@ export default {
         codexHardeningTitle: "Codex Settings",
         codexClientRestrictionTitle: "Codex client restriction",
         codexHardeningDesc:
-          "Only affects OpenAI OAuth accounts with 'Codex official clients only' enabled (global). Beyond User-Agent/Originator, harden the decision with a version range, an engine-fingerprint gate, and black/whitelists.",
+          "Only affects OpenAI OAuth accounts and OpenAI groups with 'Codex official clients only' enabled (global). Beyond User-Agent/Originator, harden the decision with a version range, an engine-fingerprint gate, and black/whitelists.",
         minCodexVersion: "Min Codex Version",
         minCodexVersionPlaceholder: "e.g. 0.142.0",
         maxCodexVersion: "Max Codex Version",

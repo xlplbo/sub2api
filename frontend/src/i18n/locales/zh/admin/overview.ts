@@ -1266,6 +1266,12 @@ export default {
         free: '免费 Fast',
         freeHint: '该分组的 Fast 请求仍使用 priority 档位，但客户实际费用按同一请求的 Standard 价格计算。'
       },
+      codexCliOnly: {
+        title: '仅允许 Codex 官方客户端',
+        hint: '仅对 OpenAI 分组生效。开启后此分组的全部网关入口（含 WebSocket，不含模型列表）仅允许 Codex 官方客户端家族访问，与账号上的同名开关同时生效；关闭后完全绕过并保持原逻辑。',
+        allowAppServer: '允许 Codex app-server 客户端',
+        allowAppServerHint: '仅在上方开关开启时生效。开启后本分组额外放行内嵌 Codex 引擎、经 app-server 协议接入的第三方客户端（如 Claude Code 的 codex 插件），仍需通过全局引擎指纹门；与全局 app-server 开关取 OR（任一开即放行）。'
+      },
       invalidRequestFallback: {
         title: '无效请求兜底分组',
         hint: '仅当上游明确返回 prompt too long 时才会触发，留空表示不兜底',

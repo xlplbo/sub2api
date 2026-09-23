@@ -111,6 +111,16 @@ func isResponsesWebSocketRoute(c *gin.Context) bool {
 // 不敏感）与 multipart 表单（首/末字段）三类解析器，这里返回「任一解析器可能
 // 绑定到的全部模型值」，调用方必须逐一校验，任一未命中即拒绝。
 func groupModelAllowlistModelsFromBody(c *gin.Context) ([]string, bool) {
+	body, ok := prereadGatewayRequestBody(c)
+	if !ok {
+		return nil, false
+	}
+	return requestmodel.FromBodyCandidates(c.FullPath(), c.GetHeader("Content-Type"), body), true
+}
+
+// prereadGatewayRequestBody 读取请求体后回填（PrereadBody），下游 handler 零拷贝重读。
+// 读取失败时写出 400/413 并 Abort，返回 false。
+func prereadGatewayRequestBody(c *gin.Context) ([]byte, bool) {
 	body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -125,7 +135,7 @@ func groupModelAllowlistModelsFromBody(c *gin.Context) ([]string, bool) {
 		return nil, false
 	}
 	requestmodel.ResetRequestBody(c.Request, body)
-	return requestmodel.FromBodyCandidates(c.FullPath(), c.GetHeader("Content-Type"), body), true
+	return body, true
 }
 
 // groupModelAllowlistModelFromParams 从路由参数提取模型名：Gemini 原生 URL 的
@@ -145,11 +155,15 @@ func groupModelAllowlistModelFromParams(c *gin.Context) string {
 	return ""
 }
 
-// groupModelAllowlistErrorWriter 按入口协议选择错误格式：
+func groupModelAllowlistErrorWriter(c *gin.Context) GatewayErrorWriter {
+	return gatewayProtocolErrorWriter(c, OpenAIErrorWriter)
+}
+
+// gatewayProtocolErrorWriter 按入口协议选择错误格式：
 // Gemini 原生（/v1beta、/antigravity/v1beta）用 Google 格式；
 // Messages 入口（含根路径别名与 /antigravity/v1）用 Anthropic 格式；
-// 其余（OpenAI 兼容入口）用 OpenAI 格式。
-func groupModelAllowlistErrorWriter(c *gin.Context) GatewayErrorWriter {
+// 其余（OpenAI 兼容入口）用调用方给定的 OpenAI 格式。
+func gatewayProtocolErrorWriter(c *gin.Context, openAIWriter GatewayErrorWriter) GatewayErrorWriter {
 	path := ""
 	if c.Request != nil && c.Request.URL != nil {
 		path = c.Request.URL.Path
@@ -160,6 +174,6 @@ func groupModelAllowlistErrorWriter(c *gin.Context) GatewayErrorWriter {
 	case strings.Contains(path, "/messages"):
 		return AnthropicErrorWriter
 	default:
-		return OpenAIErrorWriter
+		return openAIWriter
 	}
 }

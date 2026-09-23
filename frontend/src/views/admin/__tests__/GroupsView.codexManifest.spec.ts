@@ -80,6 +80,8 @@ const sourceGroup = {
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
+  codex_cli_only: false,
+  codex_cli_only_allow_app_server: false,
   model_pricing: [],
   profit_control_enabled: false,
   profit_min_margin: 0,

@@ -2405,6 +2405,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "invalid JSON payload")
 		return
 	}
+	// 分组级 codex_cli_only：HTTP 入口由中间件判定，WS 的引擎指纹 body 信号在首帧里，
+	// 故在首帧后、模型白名单与选号之前判定，拒绝语义与中间件一致。
+	if result := h.gatewayService.CheckGroupCodexClientRestriction(c, apiKey.Group, firstMessage); result.Enabled && !result.Matched {
+		service.LogGroupCodexCLIOnlyRejection(ctx, c, apiKey.Group.ID, apiKey.ID, result, firstMessage)
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+		middleware2.MarkIngressRejected(c, middleware2.IngressRejectCodexClientRestricted)
+		message := service.CodexGroupClientRestrictionMessage(result)
+		writeCodexClientRestrictedWSError(ctx, wsConn, message)
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, message)
+		return
+	}
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
 	if reqModel == "" {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
