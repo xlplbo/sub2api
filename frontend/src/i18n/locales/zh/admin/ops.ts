@@ -28,6 +28,41 @@ export default {
       loadingText: '加载中...',
       ready: '就绪',
       autoRefreshRemaining: '剩余 {seconds}s',
+      proxyHealth: {
+        title: '代理',
+        failures: '失败',
+        status: {
+          abnormal: '异常',
+          fault: '故障',
+          highErrorRate: '错误率高',
+          unused: '未使用'
+        },
+        scope: '失败次数为所选时间范围内请求经过该代理时的传输层失败（拨号失败、连接被拒、socks 错误等），不含上游返回的 HTTP 错误；时间按请求结束时间计（与“查看错误”一致），时间范围、平台与分组跟随页面筛选。故障：任意 {window} 分钟内失败率 ≥ {faultRate} 且失败 ≥ {faultMin} 次，范围内出现过即标红；错误率高：范围内失败率 ≥ {errorRate} 且失败 ≥ {errorMin} 次。成功次数按账号当前绑定的代理估算，账号换绑或切换备用代理后会有偏差。',
+        columns: {
+          status: '状态',
+          proxy: '代理',
+          failures: '失败次数',
+          failureRate: '失败率',
+          accounts: '受影响账号',
+          lastFailedAt: '最近失败',
+          lastError: '最近错误'
+        },
+        faultPeriod: '故障 {period}',
+        rateTooltip: '失败 {failed} / 尝试 {total}（成功次数按账号当前绑定的代理估算）',
+        routeDirect: '直连',
+        routeUnknown: '无法归属',
+        currentName: '现名 {name}',
+        currentStatus: {
+          inactive: '已停用',
+          expired: '已过期',
+          deleted: '已删除'
+        },
+        viewErrors: '查看错误',
+        empty: '所选时间范围内没有代理传输失败（共 {count} 个启用代理）',
+        noActiveProxies: '暂无启用的代理',
+        quietProxies: '其余 {count} 个启用代理在此期间没有失败',
+        truncated: '仅显示最严重的 {shown} 个代理（共 {total} 个有失败）'
+      },
       systemLogs: {
         title: '系统日志',
         description: '优先显示最新日志，可按条件筛选、搜索和清理。',
@@ -310,7 +345,8 @@ export default {
           internal: '内部'
         },
         total: '总计：',
-        searchPlaceholder: '搜索 request_id / client_request_id / message'
+        searchPlaceholder: '搜索 request_id / client_request_id / message',
+        allProxies: '全部代理'
       },
       // Error Detail Modal
       errorDetail: {
@@ -499,7 +535,8 @@ export default {
         metricGroups: {
           system: '系统指标',
           group: '分组级别指标（需 group_id）',
-          account: '账号级别指标'
+          account: '账号级别指标',
+          proxy: '代理指标'
         },
         metrics: {
           successRate: '成功率 (%)',
@@ -517,7 +554,10 @@ export default {
           accountErrorCount: '错误账号数（不含临时不可调度）',
           accountErrorRatio: '错误账号比例 (%)',
           accountTempUnscheduledCount: '临时不可调度账号数',
-          overloadAccountCount: '过载账号数'
+          overloadAccountCount: '过载账号数',
+          proxyTransportErrorCount: '代理传输失败次数',
+          proxyExpiredCount: '已过期代理数',
+          proxyExpiringSoonCount: '即将过期代理数'
         },
         metricDescriptions: {
           successRate: '统计窗口内成功请求占比（0~100）。',
@@ -535,7 +575,10 @@ export default {
           accountErrorCount: '统计窗口内产生错误的账号数量（不含临时不可调度）。',
           accountErrorRatio: '统计窗口内错误账号占比（0~100）。',
           accountTempUnscheduledCount: '当前处于临时不可调度状态的账号数量（如代理/凭据故障被自动摘除）。',
-          overloadAccountCount: '统计窗口内过载账号数量。'
+          overloadAccountCount: '统计窗口内过载账号数量。',
+          proxyTransportErrorCount: '统计窗口内请求经过托管代理时的传输层失败次数（拨号失败、连接被拒、socks 错误等，不含上游 HTTP 错误）。',
+          proxyExpiredCount: '当前已过期的代理数量。',
+          proxyExpiringSoonCount: '进入到期提醒期（按各代理的提前提醒天数）的代理数量。'
         },
         hints: {
           recommended: '推荐：运算符 {operator}，阈值 {threshold}{unit}',
@@ -818,6 +861,7 @@ export default {
         db: '数据库连接池状态，包括活跃连接、空闲连接和等待连接数。',
         redis: 'Redis 连接池状态，显示活跃和空闲的连接数。',
         jobs: '后台任务执行状态，包括最近运行时间、成功时间和错误信息。',
+        proxyHealth: '按请求实际经过的代理统计传输层失败（拨号失败、连接被拒、socks 错误等），不含上游 HTTP 错误。红：所选范围内有代理出现过故障时段；黄：有代理错误率过高；其余为绿。判定口径见“明细”。没有流量经过的代理无法发现。',
         qps: '每秒查询数（QPS）和每秒Token数（TPS），实时显示系统吞吐量。',
         tokens: '当前时间窗口内处理的总Token数量。',
         sla: '服务等级协议达成率，排除业务限制（如余额不足、配额超限）的成功请求占比。',

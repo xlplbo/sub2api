@@ -35,6 +35,7 @@ export interface OpsDashboardOverview {
 
   system_metrics?: OpsSystemMetricsSnapshot | null
   job_heartbeats?: OpsJobHeartbeat[] | null
+  proxy_health?: OpsProxyHealth | null
 
   success_count: number
   error_count_total: number
@@ -283,6 +284,48 @@ export interface OpsJobHeartbeat {
   last_duration_ms?: number | null
   last_result?: string | null
   updated_at: string
+}
+
+export type OpsProxyRoute = 'proxy' | 'direct' | 'unknown'
+export type OpsProxyStatus = 'fault' | 'high_error_rate' | 'ok'
+
+export interface OpsProxyHealthItem {
+  route: OpsProxyRoute
+  proxy_id: number | null
+  proxy_name: string
+  current_name?: string
+  current_status?: string
+  // 仅托管代理有值
+  status?: OpsProxyStatus
+  failed_attempts: number
+  // 到达上游的尝试：成功请求按账号当前绑定的代理估算
+  ok_attempts: number
+  failure_rate: number
+  fault_from: string | null
+  fault_to: string | null
+  affected_account_count: number
+  account_names: string[]
+  last_failed_at: string
+  last_error: string
+}
+
+export interface OpsProxyHealthRules {
+  fault_window_minutes: number
+  fault_failure_rate: number
+  fault_min_failures: number
+  error_rate: number
+  error_rate_min_failures: number
+}
+
+export interface OpsProxyHealth {
+  rules: OpsProxyHealthRules
+  active_proxy_count: number
+  failed_proxy_count: number
+  abnormal_proxy_count: number
+  high_error_rate_proxy_count: number
+  failed_attempts: number
+  items: OpsProxyHealthItem[]
+  truncated: boolean
 }
 
 export interface PlatformConcurrencyInfo {
@@ -689,6 +732,9 @@ export type MetricType =
   | 'account_error_ratio'
   | 'account_temp_unscheduled_count'
   | 'overload_account_count'
+  | 'proxy_expired_count'
+  | 'proxy_expiring_soon_count'
+  | 'proxy_transport_error_count'
 export type Operator = '>' | '>=' | '<' | '<=' | '==' | '!='
 
 export interface AlertRule {
@@ -1093,6 +1139,8 @@ export type OpsErrorListQueryParams = {
   platform?: string
   group_id?: number | null
   account_id?: number | null
+  // 按上游尝试记录的代理归属过滤（仅上游错误列表）：代理 ID 或 'direct'
+  proxy_id?: number | 'direct' | null
   user_id?: number
   api_key_id?: number
   // 模型过滤：后端以 COALESCE(requested_model, model) 精确匹配（admin 路径）。

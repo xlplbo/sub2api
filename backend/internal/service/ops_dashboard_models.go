@@ -45,6 +45,9 @@ type OpsDashboardOverview struct {
 	// Background jobs health (heartbeats).
 	JobHeartbeats []*OpsJobHeartbeat `json:"job_heartbeats"`
 
+	// Transport-level upstream attempt failures grouped by event-time proxy attribution.
+	ProxyHealth *OpsProxyHealth `json:"proxy_health"`
+
 	SuccessCount         int64 `json:"success_count"`
 	ErrorCountTotal      int64 `json:"error_count_total"`
 	BusinessLimitedCount int64 `json:"business_limited_count"`
@@ -67,6 +70,79 @@ type OpsDashboardOverview struct {
 
 	Duration OpsPercentiles `json:"duration"`
 	TTFT     OpsPercentiles `json:"ttft"`
+}
+
+const (
+	OpsProxyRouteProxy   = "proxy"
+	OpsProxyRouteDirect  = "direct"
+	OpsProxyRouteUnknown = "unknown"
+)
+
+const (
+	OpsProxyStatusFault         = "fault"
+	OpsProxyStatusHighErrorRate = "high_error_rate"
+	OpsProxyStatusOK            = "ok"
+)
+
+// OpsProxyHealthRules classify managed proxies over the selected range. A fault
+// episode is any sliding window of FaultWindowMinutes with at least
+// FaultMinFailures transport failures making up at least FaultFailureRate of the
+// attempts through the proxy; a high error rate is the same ratio over the whole
+// range reaching ErrorRate with at least ErrorRateMinFailures failures.
+type OpsProxyHealthRules struct {
+	FaultWindowMinutes   int     `json:"fault_window_minutes"`
+	FaultFailureRate     float64 `json:"fault_failure_rate"`
+	FaultMinFailures     int64   `json:"fault_min_failures"`
+	ErrorRate            float64 `json:"error_rate"`
+	ErrorRateMinFailures int64   `json:"error_rate_min_failures"`
+}
+
+// OpsProxyHealthItem is one route bucket of transport-level upstream attempt
+// failures (no upstream HTTP status). ProxyName is the label recorded on the
+// latest event; CurrentName/CurrentStatus come from the proxies table.
+// OKAttempts, FailureRate, Status and the fault period apply to managed proxies
+// only; OKAttempts counts successful requests by the account's current proxy
+// binding, so it is an estimate labeled as such in the UI.
+type OpsProxyHealthItem struct {
+	Route                string     `json:"route"`
+	ProxyID              *int64     `json:"proxy_id"`
+	ProxyName            string     `json:"proxy_name"`
+	CurrentName          string     `json:"current_name,omitempty"`
+	CurrentStatus        string     `json:"current_status,omitempty"`
+	Status               string     `json:"status,omitempty"`
+	FailedAttempts       int64      `json:"failed_attempts"`
+	OKAttempts           int64      `json:"ok_attempts"`
+	FailureRate          float64    `json:"failure_rate"`
+	FaultFrom            *time.Time `json:"fault_from"`
+	FaultTo              *time.Time `json:"fault_to"`
+	AffectedAccountCount int64      `json:"affected_account_count"`
+	AccountNames         []string   `json:"account_names"`
+	LastFailedAt         time.Time  `json:"last_failed_at"`
+	LastError            string     `json:"last_error"`
+
+	FaultTimeline *OpsProxyFaultTimeline `json:"-"`
+}
+
+// OpsProxyFaultTimeline holds the attempt times (request end) of one proxy
+// around its failure clusters: every rolling window that can reach the fault
+// failure count lies within it. Classification drops it, so cached snapshots
+// never hold the times.
+type OpsProxyFaultTimeline struct {
+	Failures []time.Time
+	OKs      []time.Time
+}
+
+type OpsProxyHealth struct {
+	Rules            OpsProxyHealthRules `json:"rules"`
+	ActiveProxyCount int64               `json:"active_proxy_count"`
+	// The counts and FailedAttempts cover managed proxies only, before truncation;
+	// AbnormalProxyCount is the number of proxies with a fault episode.
+	FailedProxyCount        int                   `json:"failed_proxy_count"`
+	AbnormalProxyCount      int                   `json:"abnormal_proxy_count"`
+	HighErrorRateProxyCount int                   `json:"high_error_rate_proxy_count"`
+	FailedAttempts          int64                 `json:"failed_attempts"`
+	Items                   []*OpsProxyHealthItem `json:"items"`
+	Truncated               bool                  `json:"truncated"`
 }
 
 type OpsLatencyHistogramBucket struct {

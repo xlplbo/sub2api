@@ -33,6 +33,7 @@ var validOpsAlertMetricTypes = []string{
 	"overload_account_count",
 	"proxy_expired_count",
 	"proxy_expiring_soon_count",
+	"proxy_transport_error_count",
 }
 
 var validOpsAlertMetricTypeSet = func() map[string]struct{} {

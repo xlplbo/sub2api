@@ -28,6 +28,41 @@ export default {
       loadingText: 'loading',
       ready: 'ready',
       autoRefreshRemaining: 'Remaining {seconds}s',
+      proxyHealth: {
+        title: 'Proxies',
+        failures: 'failures',
+        status: {
+          abnormal: 'Abnormal',
+          fault: 'Fault',
+          highErrorRate: 'High error rate',
+          unused: 'Unused'
+        },
+        scope: 'Failures are transport-level failures (dial failures, connection refused, SOCKS errors, etc.) on the proxy each request actually used within the selected range; upstream HTTP errors are excluded. Time is when the request ended, matching View errors; time range, platform and group follow the page filters. Fault: within any {window} minutes, a failure rate of at least {faultRate} with at least {faultMin} failures; any fault in the range turns red. High error rate: a failure rate of at least {errorRate} over the range with at least {errorMin} failures. Successful requests are estimated by the current proxy binding of each account and drift after rebinding or proxy fallback.',
+        columns: {
+          status: 'Status',
+          proxy: 'Proxy',
+          failures: 'Failures',
+          failureRate: 'Failure rate',
+          accounts: 'Accounts',
+          lastFailedAt: 'Last failure',
+          lastError: 'Last error'
+        },
+        faultPeriod: 'Fault {period}',
+        rateTooltip: '{failed} failed / {total} attempts (successes estimated by current proxy binding)',
+        routeDirect: 'Direct',
+        routeUnknown: 'Unattributed',
+        currentName: 'now {name}',
+        currentStatus: {
+          inactive: 'Disabled',
+          expired: 'Expired',
+          deleted: 'Deleted'
+        },
+        viewErrors: 'View errors',
+        empty: 'No proxy transport failures in the selected range ({count} active proxies).',
+        noActiveProxies: 'No active proxies.',
+        quietProxies: '{count} other active proxies had no failures in this range.',
+        truncated: 'Showing the {shown} most severe proxies ({total} proxies failed).'
+      },
       systemLogs: {
         title: 'System Logs',
         description: 'Newest logs are shown first. Filter, search, and clean up by condition.',
@@ -311,6 +346,7 @@ export default {
         },
         total: 'Total:',
         searchPlaceholder: 'Search request_id / client_request_id / message',
+        allProxies: 'All proxies',
       },
       // Error Detail Modal
       errorDetail: {
@@ -499,7 +535,8 @@ export default {
         metricGroups: {
           system: 'System Metrics',
           group: 'Group-level Metrics (requires group_id)',
-          account: 'Account-level Metrics'
+          account: 'Account-level Metrics',
+          proxy: 'Proxy Metrics'
         },
         metrics: {
           successRate: 'Success Rate (%)',
@@ -517,7 +554,10 @@ export default {
           accountErrorCount: 'Error Accounts (excluding temporarily unschedulable)',
           accountErrorRatio: 'Error Account Ratio (%)',
           accountTempUnscheduledCount: 'Temporarily Unschedulable Accounts',
-          overloadAccountCount: 'Overloaded Accounts'
+          overloadAccountCount: 'Overloaded Accounts',
+          proxyTransportErrorCount: 'Proxy Transport Failures',
+          proxyExpiredCount: 'Expired Proxies',
+          proxyExpiringSoonCount: 'Proxies Expiring Soon'
         },
         metricDescriptions: {
           successRate: 'Percentage of successful requests in the window (0-100).',
@@ -535,7 +575,10 @@ export default {
           accountErrorCount: 'Number of error accounts within the window (excluding temporarily unschedulable).',
           accountErrorRatio: 'Error account ratio within the window (0-100).',
           accountTempUnscheduledCount: 'Number of accounts currently temporarily unschedulable (e.g. proxy/credential failure auto-eviction).',
-          overloadAccountCount: 'Number of overloaded accounts within the window.'
+          overloadAccountCount: 'Number of overloaded accounts within the window.',
+          proxyTransportErrorCount: 'Transport-level failures (dial failures, connection refused, SOCKS errors, etc.) through managed proxies within the window; upstream HTTP errors are excluded.',
+          proxyExpiredCount: 'Number of proxies that have expired.',
+          proxyExpiringSoonCount: 'Number of proxies within their expiry warning period.'
         },
         hints: {
           recommended: 'Recommended: operator {operator}, threshold {threshold}{unit}',
@@ -816,6 +859,7 @@ export default {
         db: 'Database connection pool status, including active, idle, and waiting connections.',
         redis: 'Redis connection pool status, showing active and idle connections.',
         jobs: 'Background job execution status, including last run time, success time, and error information.',
+        proxyHealth: 'Transport-level failures on the proxy each request actually used (dial failures, connection refused, SOCKS errors, etc.); upstream HTTP errors are excluded. Red: a proxy had a fault period in the selected range; yellow: a proxy has a high error rate; otherwise green. See details for the rules. Proxies without traffic cannot be detected.',
         qps: 'Queries Per Second (QPS) and Tokens Per Second (TPS), real-time system throughput.',
         tokens: 'Total number of tokens processed in the current time window.',
         sla: 'Service Level Agreement success rate, excluding business limits (e.g., insufficient balance, quota exceeded).',

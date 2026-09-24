@@ -14,6 +14,8 @@ type opsRepoMock struct {
 	ListSystemLogsFn              func(ctx context.Context, filter *OpsSystemLogFilter) (*OpsSystemLogList, error)
 	DeleteSystemLogsFn            func(ctx context.Context, filter *OpsSystemLogCleanupFilter) (int64, error)
 	InsertSystemLogCleanupAuditFn func(ctx context.Context, input *OpsSystemLogCleanupAudit) error
+	ListProxyTransportFailuresFn  func(ctx context.Context, filter *OpsDashboardFilter, rules OpsProxyHealthRules) ([]*OpsProxyHealthItem, error)
+	CountProxyTransportFailuresFn func(ctx context.Context, filter *OpsDashboardFilter) (int64, error)
 }
 
 func (m *opsRepoMock) InsertErrorLog(ctx context.Context, input *OpsInsertErrorLogInput) (int64, error) {
@@ -107,6 +109,24 @@ func (m *opsRepoMock) GetErrorDistribution(ctx context.Context, filter *OpsDashb
 
 func (m *opsRepoMock) GetOpenAITokenStats(ctx context.Context, filter *OpsOpenAITokenStatsFilter) (*OpsOpenAITokenStatsResponse, error) {
 	return &OpsOpenAITokenStatsResponse{}, nil
+}
+
+func (m *opsRepoMock) ListProxyTransportFailures(ctx context.Context, filter *OpsDashboardFilter, rules OpsProxyHealthRules) ([]*OpsProxyHealthItem, error) {
+	if m.ListProxyTransportFailuresFn != nil {
+		return m.ListProxyTransportFailuresFn(ctx, filter, rules)
+	}
+	return []*OpsProxyHealthItem{}, nil
+}
+
+func (m *opsRepoMock) CountProxyTransportFailures(ctx context.Context, filter *OpsDashboardFilter) (int64, error) {
+	if m.CountProxyTransportFailuresFn != nil {
+		return m.CountProxyTransportFailuresFn(ctx, filter)
+	}
+	return 0, nil
+}
+
+func (m *opsRepoMock) CountActiveProxies(ctx context.Context) (int64, error) {
+	return 0, nil
 }
 
 func (m *opsRepoMock) InsertSystemMetrics(ctx context.Context, input *OpsInsertSystemMetricsInput) error {
