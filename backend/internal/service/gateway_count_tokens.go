@@ -296,6 +296,7 @@ func (s *GatewayService) forwardCountTokensAnthropicAPIKeyPassthrough(ctx contex
 			UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 			Passthrough:        true,
 			Kind:               "request_error",
+			Reason:             opsUpstreamTransportReason(ctx, err),
 			Message:            sanitizeUpstreamErrorMessage(err.Error()),
 		})
 		s.countTokensError(c, http.StatusBadGateway, "upstream_error", "Request failed")

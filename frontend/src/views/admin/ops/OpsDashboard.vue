@@ -119,6 +119,7 @@
           :platform="platform"
           :group-id="groupId"
           :error-type="errorDetailsType"
+          :proxy-filter="errorDetailsProxy"
           :resume-state="resumeListState"
           @update:show="showErrorDetails = $event"
           @openErrorDetail="openError"
@@ -371,6 +372,7 @@ const showErrorModal = ref(false)
 
 const showErrorDetails = ref(false)
 const errorDetailsType = ref<'request' | 'upstream'>('request')
+const errorDetailsProxy = ref<number | 'direct' | null>(null)
 
 const showRequestDetails = ref(false)
 const requestDetailsPreset = ref<OpsRequestDetailsPreset>({
@@ -465,8 +467,9 @@ function handleOpenRequestDetails(preset?: OpsRequestDetailsPreset) {
   showRequestDetails.value = true
 }
 
-function openErrorDetails(kind: 'request' | 'upstream') {
+function openErrorDetails(kind: 'request' | 'upstream', options?: { proxyId?: number | 'direct' }) {
   errorDetailsType.value = kind
+  errorDetailsProxy.value = options?.proxyId ?? null
   // Ensure only one modal visible at a time.
   showRequestDetails.value = false
   showErrorModal.value = false

@@ -7,11 +7,18 @@ import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { adminAPI } from '@/api'
-import { opsAPI, type OpsDashboardOverview, type OpsMetricThresholds, type OpsRealtimeTrafficSummary } from '@/api/admin/ops'
+import {
+  opsAPI,
+  type OpsDashboardOverview,
+  type OpsMetricThresholds,
+  type OpsProxyHealthItem,
+  type OpsRealtimeTrafficSummary
+} from '@/api/admin/ops'
 import type { OpsRequestDetailsPreset } from './OpsRequestDetailsModal.vue'
 import { useAdminSettingsStore } from '@/stores'
 import { formatNumber } from '@/utils/format'
 import { formatMemorySizeMB } from '../utils/opsFormatters'
+import { formatProxyRate, quietActiveProxyCount, summarizeProxyHealth } from '../utils/opsProxyHealth'
 
 type RealtimeWindow = '1min' | '5min' | '30min' | '1h'
 
@@ -39,7 +46,7 @@ interface Emits {
   (e: 'update:customTimeRange', startTime: string, endTime: string): void
   (e: 'refresh'): void
   (e: 'openRequestDetails', preset?: OpsRequestDetailsPreset): void
-  (e: 'openErrorDetails', kind: 'request' | 'upstream'): void
+  (e: 'openErrorDetails', kind: 'request' | 'upstream', options?: { proxyId?: number | 'direct' }): void
   (e: 'openSettings'): void
   (e: 'openAlertRules'): void
   (e: 'enterFullscreen'): void
@@ -852,6 +859,124 @@ function openJobsDetails() {
   showJobsDetails.value = true
 }
 
+const proxyHealth = computed(() => overview.value?.proxy_health ?? null)
+const proxySummary = computed(() => summarizeProxyHealth(proxyHealth.value))
+const proxyItems = computed(() => proxyHealth.value?.items ?? [])
+const proxyQuietCount = computed(() => quietActiveProxyCount(proxyHealth.value))
+const proxyScopeParams = computed(() => {
+  const rules = proxyHealth.value?.rules
+  if (!rules) return null
+  return {
+    window: rules.fault_window_minutes,
+    faultRate: formatProxyRate(rules.fault_failure_rate),
+    faultMin: rules.fault_min_failures,
+    errorRate: formatProxyRate(rules.error_rate),
+    errorMin: rules.error_rate_min_failures
+  }
+})
+
+const proxyStatusLabel = computed(() => {
+  switch (proxySummary.value.status) {
+    case 'abnormal':
+      return t('admin.ops.proxyHealth.status.abnormal')
+    case 'high_error_rate':
+      return t('admin.ops.proxyHealth.status.highErrorRate')
+    case 'ok':
+      return t('admin.ops.ok')
+    case 'unused':
+      return t('admin.ops.proxyHealth.status.unused')
+    default:
+      return t('admin.ops.noData')
+  }
+})
+
+const proxyStatusClass = computed(() => {
+  switch (proxySummary.value.status) {
+    case 'abnormal':
+      return 'text-rose-600 dark:text-rose-400'
+    case 'high_error_rate':
+      return 'text-yellow-600 dark:text-yellow-400'
+    case 'ok':
+      return 'text-emerald-600 dark:text-emerald-400'
+    case 'unused':
+      return 'text-gray-400 dark:text-gray-500'
+    default:
+      return 'text-gray-900 dark:text-white'
+  }
+})
+
+function proxyItemBadgeClass(item: OpsProxyHealthItem): string {
+  switch (item.status) {
+    case 'fault':
+      return 'bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300'
+    case 'high_error_rate':
+      return 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+    default:
+      return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+  }
+}
+
+function proxyItemStatusLabel(item: OpsProxyHealthItem): string {
+  switch (item.status) {
+    case 'fault':
+      return t('admin.ops.proxyHealth.status.fault')
+    case 'high_error_rate':
+      return t('admin.ops.proxyHealth.status.highErrorRate')
+    default:
+      return t('admin.ops.ok')
+  }
+}
+
+function formatProxyFaultPeriod(item: OpsProxyHealthItem): string {
+  if (!item.fault_from || !item.fault_to) return ''
+  const from = new Date(item.fault_from)
+  const to = new Date(item.fault_to)
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return ''
+  const time: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' }
+  const dateTime: Intl.DateTimeFormatOptions = { month: '2-digit', day: '2-digit', ...time }
+  const sameDay = from.toDateString() === to.toDateString()
+  return `${from.toLocaleString(undefined, dateTime)} – ${to.toLocaleString(undefined, sameDay ? time : dateTime)}`
+}
+
+function proxyItemLabel(item: OpsProxyHealthItem): string {
+  if (item.route === 'direct') return t('admin.ops.proxyHealth.routeDirect')
+  if (item.route === 'unknown') return t('admin.ops.proxyHealth.routeUnknown')
+  return item.proxy_name || `#${item.proxy_id}`
+}
+
+function proxyCurrentStatusLabel(item: OpsProxyHealthItem): string {
+  switch (item.current_status) {
+    case 'inactive':
+      return t('admin.ops.proxyHealth.currentStatus.inactive')
+    case 'expired':
+      return t('admin.ops.proxyHealth.currentStatus.expired')
+    case 'deleted':
+      return t('admin.ops.proxyHealth.currentStatus.deleted')
+    default:
+      return ''
+  }
+}
+
+function formatProxyFailedAt(ts?: string | null): string {
+  if (!ts) return '-'
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return '-'
+  return d.toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+const showProxyDetails = ref(false)
+
+function openProxyDetails() {
+  showProxyDetails.value = true
+}
+
+function openProxyErrors(item: OpsProxyHealthItem) {
+  const proxyId = item.route === 'direct' ? 'direct' : item.proxy_id
+  if (proxyId == null) return
+  showProxyDetails.value = false
+  emit('openErrorDetails', 'upstream', { proxyId })
+}
+
 function handleToolbarRefresh() {
   loadRealtimeTrafficSummary()
   emit('refresh')
@@ -1433,7 +1558,7 @@ function handleToolbarRefresh() {
 
     <!-- Integrated: System health (cards) -->
     <div v-if="overview" class="mt-2 border-t border-gray-100 pt-4 dark:border-dark-700">
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
         <!-- CPU -->
         <div class="rounded-xl bg-gray-50 p-3 dark:bg-dark-900">
           <div class="flex items-center gap-1">
@@ -1539,8 +1664,131 @@ function handleToolbarRefresh() {
             · {{ t('common.warning') }} <span class="font-mono">{{ jobsWarnCount }}</span>
           </div>
         </div>
+
+        <!-- Proxies -->
+        <div class="col-span-2 rounded-xl bg-gray-50 p-3 dark:bg-dark-900 sm:col-span-1" data-testid="ops-proxy-health-card">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1">
+              <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.proxyHealth.title') }}</div>
+              <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.proxyHealth')" />
+            </div>
+            <button v-if="!props.fullscreen" class="text-[10px] font-bold text-blue-500 hover:underline" type="button" @click="openProxyDetails">
+              {{ t('admin.ops.requestDetails.details') }}
+            </button>
+          </div>
+
+          <div class="mt-1 text-lg font-black" :class="proxyStatusClass">
+            {{ proxyStatusLabel }}
+          </div>
+
+          <div v-if="!props.fullscreen" class="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
+            {{ t('common.total') }} <span class="font-mono">{{ proxySummary.activeProxyCount }}</span>
+            · {{ t('admin.ops.proxyHealth.status.abnormal') }} <span class="font-mono">{{ proxySummary.abnormalCount }}</span>
+            · {{ t('admin.ops.proxyHealth.failures') }} <span class="font-mono">{{ proxySummary.failedAttempts }}</span>
+          </div>
+        </div>
       </div>
     </div>
+
+    <BaseDialog :show="showProxyDetails" :title="t('admin.ops.proxyHealth.title')" width="extra-wide" @close="showProxyDetails = false">
+      <div class="space-y-3" data-testid="ops-proxy-health-details">
+        <div v-if="proxyScopeParams" class="text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.ops.proxyHealth.scope', proxyScopeParams) }}
+        </div>
+
+        <div v-if="!proxyItems.length" class="rounded-xl border border-gray-100 p-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400">
+          {{
+            proxySummary.activeProxyCount > 0
+              ? t('admin.ops.proxyHealth.empty', { count: proxySummary.activeProxyCount })
+              : t('admin.ops.proxyHealth.noActiveProxies')
+          }}
+        </div>
+
+        <div v-else class="overflow-x-auto rounded-xl border border-gray-100 dark:border-dark-700">
+          <table class="min-w-full text-xs">
+            <thead class="bg-gray-50 text-left text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:bg-dark-900">
+              <tr>
+                <th class="px-3 py-2">{{ t('admin.ops.proxyHealth.columns.status') }}</th>
+                <th class="px-3 py-2">{{ t('admin.ops.proxyHealth.columns.proxy') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.ops.proxyHealth.columns.failures') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.ops.proxyHealth.columns.failureRate') }}</th>
+                <th class="px-3 py-2 text-right">{{ t('admin.ops.proxyHealth.columns.accounts') }}</th>
+                <th class="px-3 py-2">{{ t('admin.ops.proxyHealth.columns.lastFailedAt') }}</th>
+                <th class="px-3 py-2">{{ t('admin.ops.proxyHealth.columns.lastError') }}</th>
+                <th class="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
+              <tr
+                v-for="item in proxyItems"
+                :key="`${item.route}-${item.proxy_id ?? ''}`"
+                :class="item.route === 'proxy' ? 'text-gray-700 dark:text-gray-200' : 'text-gray-400 dark:text-gray-500'"
+              >
+                <td class="whitespace-nowrap px-3 py-2">
+                  <span
+                    v-if="item.route === 'proxy'"
+                    class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold"
+                    :class="proxyItemBadgeClass(item)"
+                  >
+                    {{ proxyItemStatusLabel(item) }}
+                  </span>
+                  <div v-if="formatProxyFaultPeriod(item)" class="mt-0.5 text-[10px] text-rose-500 dark:text-rose-400">
+                    {{ t('admin.ops.proxyHealth.faultPeriod', { period: formatProxyFaultPeriod(item) }) }}
+                  </div>
+                </td>
+                <td class="whitespace-nowrap px-3 py-2">
+                  <span class="font-semibold">{{ proxyItemLabel(item) }}</span>
+                  <span v-if="item.proxy_id != null" class="ml-1 font-mono text-gray-400">#{{ item.proxy_id }}</span>
+                  <span
+                    v-if="item.current_name && item.current_name !== item.proxy_name"
+                    class="ml-1 text-[10px] text-gray-400"
+                  >
+                    {{ t('admin.ops.proxyHealth.currentName', { name: item.current_name }) }}
+                  </span>
+                  <span
+                    v-if="proxyCurrentStatusLabel(item)"
+                    class="ml-1 rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500 dark:bg-dark-700 dark:text-gray-400"
+                  >
+                    {{ proxyCurrentStatusLabel(item) }}
+                  </span>
+                </td>
+                <td class="whitespace-nowrap px-3 py-2 text-right font-mono font-semibold">{{ item.failed_attempts }}</td>
+                <td
+                  class="whitespace-nowrap px-3 py-2 text-right font-mono"
+                  :title="item.route === 'proxy' ? t('admin.ops.proxyHealth.rateTooltip', { failed: item.failed_attempts, total: item.failed_attempts + item.ok_attempts }) : ''"
+                >
+                  {{ item.route === 'proxy' ? formatProxyRate(item.failure_rate) : '-' }}
+                </td>
+                <td class="whitespace-nowrap px-3 py-2 text-right font-mono" :title="item.account_names.join('\n')">
+                  {{ item.affected_account_count }}
+                </td>
+                <td class="whitespace-nowrap px-3 py-2 font-mono">{{ formatProxyFailedAt(item.last_failed_at) }}</td>
+                <td class="max-w-[360px] px-3 py-2">
+                  <div class="truncate" :title="item.last_error">{{ item.last_error || '-' }}</div>
+                </td>
+                <td class="whitespace-nowrap px-3 py-2 text-right">
+                  <button
+                    v-if="item.route !== 'unknown'"
+                    class="text-[10px] font-bold text-blue-500 hover:underline"
+                    type="button"
+                    @click="openProxyErrors(item)"
+                  >
+                    {{ t('admin.ops.proxyHealth.viewErrors') }}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="proxyHealth?.truncated" class="text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.ops.proxyHealth.truncated', { shown: proxyItems.filter((i) => i.route === 'proxy').length, total: proxyHealth.failed_proxy_count }) }}
+        </div>
+        <div v-else-if="proxyItems.length && proxyQuietCount" class="text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.ops.proxyHealth.quietProxies', { count: proxyQuietCount }) }}
+        </div>
+      </div>
+    </BaseDialog>
 
     <BaseDialog :show="showJobsDetails" :title="t('admin.ops.jobs')" width="wide" @close="showJobsDetails = false">
       <div v-if="!jobHeartbeats.length" class="text-sm text-gray-500 dark:text-gray-400">

@@ -92,6 +92,28 @@ func classifyUpstreamTransportError(err error) upstreamTransportErrorClass {
 	return upstreamTransportErrorClass{}
 }
 
+// opsUpstreamReasonRequestCanceled marks transport attempts ended by the
+// request's own cancellation or deadline. They are neither proxy nor upstream
+// faults, so proxy health monitoring excludes them.
+const opsUpstreamReasonRequestCanceled = "request_canceled"
+
+// isUpstreamTransportRequestCanceled reports whether a transport error came from
+// the request itself going away (client disconnect / request deadline) rather
+// than from the proxy or upstream path.
+func isUpstreamTransportRequestCanceled(ctx context.Context, err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded) && ctx != nil && errors.Is(ctx.Err(), context.DeadlineExceeded)
+}
+
+func opsUpstreamTransportReason(ctx context.Context, err error) string {
+	if isUpstreamTransportRequestCanceled(ctx, err) {
+		return opsUpstreamReasonRequestCanceled
+	}
+	return ""
+}
+
 // handleOpenAIUpstreamTransportError handles a transport-level upstream failure
 // (Do/DoWithTLS returned a non-HTTP error: proxy/DNS/TCP/TLS). It:
 //  1. records the failure in Ops error logs (status 0, kind=request_error);
@@ -117,12 +139,13 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 		UpstreamStatusCode: 0,
 		Passthrough:        passthrough,
 		Kind:               "request_error",
+		Reason:             opsUpstreamTransportReason(ctx, err),
 		Message:            safeErr,
 	})
 
 	// Client disconnected: do NOT fail over to another account and do NOT evict
 	// this one — the upstream never had a chance to exhibit a fault.
-	if errors.Is(err, context.Canceled) || (errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded)) {
+	if isUpstreamTransportRequestCanceled(ctx, err) {
 		return err
 	}
 

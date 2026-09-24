@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -32,12 +31,13 @@ func (s *GeminiMessagesCompatService) handleUpstreamTransportError(ctx context.C
 		AccountName:        account.Name,
 		UpstreamStatusCode: 0,
 		Kind:               "request_error",
+		Reason:             opsUpstreamTransportReason(ctx, err),
 		Message:            safeErr,
 	}
 	event.ProxyID, event.ProxyName = opsUpstreamProxyAttribution(account)
 	appendOpsUpstreamError(c, event)
 
-	if errors.Is(err, context.Canceled) || (errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded)) {
+	if isUpstreamTransportRequestCanceled(ctx, err) {
 		return err
 	}
 

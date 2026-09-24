@@ -524,6 +524,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 											UpstreamStatusCode: 0,
 											UpstreamURL:        safeUpstreamURL(retryReq2.URL.String()),
 											Kind:               "signature_retry_tools_request_error",
+											Reason:             opsUpstreamTransportReason(ctx, retryErr2),
 											Message:            sanitizeUpstreamErrorMessage(retryErr2.Error()),
 										})
 										logger.LegacyPrintf("service.gateway", "Account %d: tool-downgrade signature retry failed: %v", account.ID, retryErr2)

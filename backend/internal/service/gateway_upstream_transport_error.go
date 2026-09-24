@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"time"
 
@@ -47,12 +46,13 @@ func (s *GatewayService) handleUpstreamTransportError(ctx context.Context, c *gi
 	event.AccountName = account.Name
 	event.UpstreamStatusCode = 0
 	event.Kind = "request_error"
+	event.Reason = opsUpstreamTransportReason(ctx, err)
 	event.Message = safeErr
 	appendOpsUpstreamError(c, event)
 
 	// Client disconnected: do NOT fail over to another account and do NOT
 	// evict this one — the upstream never had a chance to exhibit a fault.
-	if errors.Is(err, context.Canceled) || (errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded)) {
+	if isUpstreamTransportRequestCanceled(ctx, err) {
 		return err
 	}
 

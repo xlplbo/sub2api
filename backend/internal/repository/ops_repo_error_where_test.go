@@ -46,3 +46,29 @@ func TestBuildOpsErrorLogsWhere_UserQueryUsesExistsSubquery(t *testing.T) {
 		t.Fatalf("where should include EXISTS user email condition: %s", where)
 	}
 }
+
+func TestBuildOpsErrorLogsWhere_ProxyIDMatchesAttemptAttribution(t *testing.T) {
+	proxyID := int64(4)
+	filter := &service.OpsErrorLogFilter{ProxyID: &proxyID, ProxyDirect: true}
+
+	where, args := buildOpsErrorLogsWhere(filter)
+	if len(args) != 1 || args[0] != proxyID {
+		t.Fatalf("args = %v, want [4]", args)
+	}
+	if !strings.Contains(where, "e.upstream_errors @> jsonb_build_array(jsonb_build_object('proxy_id', $1::bigint))") {
+		t.Fatalf("where should match proxy attribution on upstream attempts: %s", where)
+	}
+	if strings.Contains(where, "direct/no_proxy") {
+		t.Fatalf("proxy id takes precedence over direct: %s", where)
+	}
+}
+
+func TestBuildOpsErrorLogsWhere_ProxyDirectMatchesDirectAttempts(t *testing.T) {
+	where, args := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{ProxyDirect: true})
+	if len(args) != 0 {
+		t.Fatalf("args len = %d, want 0", len(args))
+	}
+	if !strings.Contains(where, `e.upstream_errors @> '[{"proxy_name": "direct/no_proxy"}]'::jsonb`) {
+		t.Fatalf("where should match direct attempts: %s", where)
+	}
+}
