@@ -556,6 +556,7 @@ urlFallbackLoop:
 					UpstreamStatusCode: 0,
 					UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 					Kind:               "request_error",
+					Reason:             opsUpstreamTransportReason(p.ctx, err),
 					Message:            safeErr,
 				})
 				if shouldAntigravityFallbackToNextURL(err, 0) && urlIdx < len(availableURLs)-1 {

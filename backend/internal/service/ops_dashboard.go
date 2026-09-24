@@ -65,6 +65,12 @@ func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashbo
 		log.Printf("[Ops] ListJobHeartbeats failed: %v", err)
 	}
 
+	if proxyHealth, err := s.getProxyHealth(ctx, filter); err == nil {
+		overview.ProxyHealth = proxyHealth
+	} else {
+		log.Printf("[Ops] GetProxyHealth failed: %v", err)
+	}
+
 	overview.HealthScore = computeDashboardHealthScore(time.Now().UTC(), overview)
 
 	return overview, nil

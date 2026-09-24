@@ -4,8 +4,12 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import OpsErrorLogTable from './OpsErrorLogTable.vue'
+import { adminAPI } from '@/api'
 import { opsAPI, type OpsErrorLog } from '@/api/admin/ops'
+import type { Proxy } from '@/types'
 import { buildOpsErrorTimeParams } from '../utils/opsErrorParams'
+
+type ProxyFilter = number | 'direct' | null
 
 interface Props {
   show: boolean
@@ -15,6 +19,8 @@ interface Props {
   platform?: string
   groupId?: number | null
   errorType: 'request' | 'upstream'
+  // 打开上游错误列表时预置的代理筛选（来自代理卡片明细）
+  proxyFilter?: ProxyFilter
   resumeState?: boolean
 }
 
@@ -38,6 +44,8 @@ const statusCode = ref<number | 'other' | null>(null)
 const phase = ref<string>('')
 const errorOwner = ref<string>('')
 const viewMode = ref<'errors' | 'excluded' | 'all'>('errors')
+const proxyId = ref<ProxyFilter>(null)
+const proxies = ref<Proxy[]>([])
 
 
 const modalTitle = computed(() => {
@@ -70,6 +78,30 @@ const viewModeSelectOptions = computed(() => {
     { value: 'all', label: t('common.all') }
   ]
 })
+
+const proxySelectOptions = computed(() => {
+  const options: { value: ProxyFilter; label: string }[] = [
+    { value: null, label: t('admin.ops.errorDetails.allProxies') },
+    { value: 'direct', label: t('admin.ops.proxyHealth.routeDirect') }
+  ]
+  for (const proxy of proxies.value) {
+    options.push({ value: proxy.id, label: `${proxy.name} #${proxy.id}` })
+  }
+  // 已删除或停用的代理不在列表里，保留预置项以免下拉显示为空。
+  if (typeof proxyId.value === 'number' && !proxies.value.some((p) => p.id === proxyId.value)) {
+    options.push({ value: proxyId.value, label: `#${proxyId.value}` })
+  }
+  return options
+})
+
+async function loadProxies() {
+  if (proxies.value.length) return
+  try {
+    proxies.value = await adminAPI.proxies.getAll()
+  } catch (err) {
+    console.error('[OpsErrorDetailsModal] Failed to load proxies', err)
+  }
+}
 
 const phaseSelectOptions = computed(() => {
   const options = [
@@ -138,6 +170,7 @@ async function fetchErrorLogs() {
     const ownerVal = String(errorOwner.value || '').trim()
     if (ownerVal) params.error_owner = ownerVal
 
+    if (props.errorType === 'upstream' && proxyId.value != null) params.proxy_id = proxyId.value
 
     const res = props.errorType === 'upstream'
       ? await opsAPI.listUpstreamErrors(params)
@@ -153,12 +186,13 @@ async function fetchErrorLogs() {
   }
 }
 
-  function resetFilters() {
+  function resetFilters(presetProxy: ProxyFilter = null) {
     q.value = ''
     statusCode.value = null
     phase.value = props.errorType === 'upstream' ? 'upstream' : ''
     errorOwner.value = ''
     viewMode.value = 'errors'
+    proxyId.value = props.errorType === 'upstream' ? presetProxy : null
     page.value = 1
     fetchErrorLogs()
   }
@@ -168,10 +202,11 @@ watch(
   () => props.show,
   (open) => {
     if (!open) return
+    if (props.errorType === 'upstream') void loadProxies()
     if (props.resumeState) return
     page.value = 1
     pageSize.value = 10
-    resetFilters()
+    resetFilters(props.proxyFilter ?? null)
   }
 )
 
@@ -206,7 +241,7 @@ watch(
 )
 
 watch(
-  () => [statusCode.value, phase.value, errorOwner.value, viewMode.value] as const,
+  () => [statusCode.value, phase.value, errorOwner.value, viewMode.value, proxyId.value] as const,
   () => {
     if (!props.show) return
     page.value = 1
@@ -260,8 +295,12 @@ watch(
             <Select :model-value="viewMode" :options="viewModeSelectOptions" @update:model-value="viewMode = $event as any" />
           </div>
 
+          <div v-if="errorType === 'upstream'" class="compact-select" data-testid="ops-error-proxy-filter">
+            <Select :model-value="proxyId" :options="proxySelectOptions" @update:model-value="proxyId = $event as ProxyFilter" />
+          </div>
+
           <div class="flex items-center justify-end">
-            <button type="button" class="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600" @click="resetFilters">
+            <button type="button" class="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600" @click="resetFilters()">
               {{ t('common.reset') }}
             </button>
           </div>
