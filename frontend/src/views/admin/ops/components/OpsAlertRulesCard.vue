@@ -48,7 +48,7 @@ const saving = ref(false)
 const editingId = ref<number | null>(null)
 const draft = ref<AlertRule | null>(null)
 
-type MetricGroup = 'system' | 'group' | 'account'
+type MetricGroup = 'system' | 'group' | 'account' | 'proxy'
 
 interface MetricDefinition {
   type: MetricType
@@ -240,6 +240,32 @@ const metricDefinitions = computed(() => {
       description: t('admin.ops.alertRules.metricDescriptions.overloadAccountCount'),
       recommendedOperator: '>',
       recommendedThreshold: 0
+    },
+
+    // Proxy-level metrics
+    {
+      type: 'proxy_transport_error_count',
+      group: 'proxy',
+      label: t('admin.ops.alertRules.metrics.proxyTransportErrorCount'),
+      description: t('admin.ops.alertRules.metricDescriptions.proxyTransportErrorCount'),
+      recommendedOperator: '>=',
+      recommendedThreshold: 3
+    },
+    {
+      type: 'proxy_expired_count',
+      group: 'proxy',
+      label: t('admin.ops.alertRules.metrics.proxyExpiredCount'),
+      description: t('admin.ops.alertRules.metricDescriptions.proxyExpiredCount'),
+      recommendedOperator: '>',
+      recommendedThreshold: 0
+    },
+    {
+      type: 'proxy_expiring_soon_count',
+      group: 'proxy',
+      label: t('admin.ops.alertRules.metrics.proxyExpiringSoonCount'),
+      description: t('admin.ops.alertRules.metricDescriptions.proxyExpiringSoonCount'),
+      recommendedOperator: '>',
+      recommendedThreshold: 0
     }
   ] satisfies MetricDefinition[]
 })
@@ -266,7 +292,7 @@ const metricOptions = computed(() => {
     ]
   }
 
-  return [...buildGroup('system'), ...buildGroup('group'), ...buildGroup('account')]
+  return [...buildGroup('system'), ...buildGroup('group'), ...buildGroup('account'), ...buildGroup('proxy')]
 })
 
 const operatorOptions = computed(() => {

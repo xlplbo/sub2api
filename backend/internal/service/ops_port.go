@@ -29,6 +29,9 @@ type OpsRepository interface {
 	GetErrorTrend(ctx context.Context, filter *OpsDashboardFilter, bucketSeconds int) (*OpsErrorTrendResponse, error)
 	GetErrorDistribution(ctx context.Context, filter *OpsDashboardFilter) (*OpsErrorDistributionResponse, error)
 	GetOpenAITokenStats(ctx context.Context, filter *OpsOpenAITokenStatsFilter) (*OpsOpenAITokenStatsResponse, error)
+	ListProxyTransportFailures(ctx context.Context, filter *OpsDashboardFilter, rules OpsProxyHealthRules) ([]*OpsProxyHealthItem, error)
+	CountProxyTransportFailures(ctx context.Context, filter *OpsDashboardFilter) (int64, error)
+	CountActiveProxies(ctx context.Context) (int64, error)
 
 	InsertSystemMetrics(ctx context.Context, input *OpsInsertSystemMetricsInput) error
 	GetLatestSystemMetrics(ctx context.Context, windowMinutes int) (*OpsSystemMetricsSnapshot, error)

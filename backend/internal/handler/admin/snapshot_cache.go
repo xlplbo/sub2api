@@ -11,6 +11,8 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+const snapshotCacheMaxEntries = 256
+
 type snapshotCacheEntry struct {
 	ETag      string
 	Payload   any
@@ -18,10 +20,12 @@ type snapshotCacheEntry struct {
 }
 
 type snapshotCache struct {
-	mu    sync.RWMutex
-	ttl   time.Duration
-	items map[string]snapshotCacheEntry
-	sf    singleflight.Group
+	mu         sync.RWMutex
+	ttl        time.Duration
+	maxEntries int
+	lastSweep  time.Time
+	items      map[string]snapshotCacheEntry
+	sf         singleflight.Group
 }
 
 type snapshotCacheLoadResult struct {
@@ -34,8 +38,9 @@ func newSnapshotCache(ttl time.Duration) *snapshotCache {
 		ttl = 30 * time.Second
 	}
 	return &snapshotCache{
-		ttl:   ttl,
-		items: make(map[string]snapshotCacheEntry),
+		ttl:        ttl,
+		maxEntries: snapshotCacheMaxEntries,
+		items:      make(map[string]snapshotCacheEntry),
 	}
 }
 
@@ -73,9 +78,38 @@ func (c *snapshotCache) Set(key string, payload any) snapshotCacheEntry {
 		return entry
 	}
 	c.mu.Lock()
+	c.pruneLocked(key)
 	c.items[key] = entry
 	c.mu.Unlock()
 	return entry
+}
+
+// pruneLocked makes room for key. Keys often embed the query time, so an expired
+// key is rarely read (and removed by Get) again: expired entries are swept at
+// most once per TTL, and the soonest-expiring entry is evicted at capacity.
+func (c *snapshotCache) pruneLocked(key string) {
+	now := time.Now()
+	if now.Sub(c.lastSweep) >= c.ttl {
+		for k, e := range c.items {
+			if now.After(e.ExpiresAt) {
+				delete(c.items, k)
+			}
+		}
+		c.lastSweep = now
+	}
+	if _, ok := c.items[key]; ok || c.maxEntries <= 0 {
+		return
+	}
+	for len(c.items) >= c.maxEntries {
+		var oldest string
+		var oldestAt time.Time
+		for k, e := range c.items {
+			if oldestAt.IsZero() || e.ExpiresAt.Before(oldestAt) {
+				oldest, oldestAt = k, e.ExpiresAt
+			}
+		}
+		delete(c.items, oldest)
+	}
 }
 
 func (c *snapshotCache) GetOrLoad(key string, load func() (any, error)) (snapshotCacheEntry, bool, error) {

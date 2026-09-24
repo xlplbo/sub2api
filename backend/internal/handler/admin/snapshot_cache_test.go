@@ -33,6 +33,35 @@ func TestSnapshotCache_Expiration(t *testing.T) {
 	require.False(t, ok, "expired entry should not be returned")
 }
 
+func TestSnapshotCache_SetSweepsExpiredEntriesOfOtherKeys(t *testing.T) {
+	c := newSnapshotCache(1 * time.Millisecond)
+
+	c.Set("2026-09-24T12:00:00Z", "value")
+	c.Set("2026-09-24T12:00:01Z", "value")
+	time.Sleep(5 * time.Millisecond)
+	c.Set("2026-09-24T12:00:02Z", "value")
+
+	require.Len(t, c.items, 1, "expired keys that are never read again must not pile up")
+	require.Contains(t, c.items, "2026-09-24T12:00:02Z")
+}
+
+func TestSnapshotCache_SetEvictsSoonestExpiringAtCapacity(t *testing.T) {
+	c := newSnapshotCache(time.Minute)
+	c.maxEntries = 2
+	now := time.Now()
+	c.items["a"] = snapshotCacheEntry{ExpiresAt: now.Add(2 * time.Minute)}
+	c.items["b"] = snapshotCacheEntry{ExpiresAt: now.Add(30 * time.Second)}
+
+	c.Set("a", "refresh")
+	require.Len(t, c.items, 2, "overwriting a key needs no room")
+
+	c.Set("c", "value")
+	require.Len(t, c.items, 2)
+	require.NotContains(t, c.items, "b")
+	require.Contains(t, c.items, "a")
+	require.Contains(t, c.items, "c")
+}
+
 func TestSnapshotCache_GetEmptyKey(t *testing.T) {
 	c := newSnapshotCache(5 * time.Second)
 	_, ok := c.Get("")

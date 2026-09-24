@@ -686,6 +686,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			UpstreamStatusCode: 0,
 			UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 			Kind:               "request_error",
+			Reason:             opsUpstreamTransportReason(upstreamCtx, err),
 			Message:            safeErr,
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)

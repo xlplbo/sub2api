@@ -104,6 +104,7 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 			AccountName:        account.Name,
 			UpstreamStatusCode: 0,
 			Kind:               "request_error",
+			Reason:             opsUpstreamTransportReason(ctx, err),
 			Message:            safeErr,
 		})
 		writeOpenAIEmbeddingsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
