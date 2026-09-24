@@ -496,6 +496,18 @@ func (h *OpsHandler) ListUpstreamErrors(c *gin.Context) {
 		}
 		filter.AccountID = &id
 	}
+	if v := strings.TrimSpace(c.Query("proxy_id")); v != "" {
+		if strings.EqualFold(v, "direct") {
+			filter.ProxyDirect = true
+		} else {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || id <= 0 {
+				response.BadRequest(c, "Invalid proxy_id")
+				return
+			}
+			filter.ProxyID = &id
+		}
+	}
 
 	if v := strings.TrimSpace(c.Query("resolved")); v != "" {
 		switch strings.ToLower(v) {

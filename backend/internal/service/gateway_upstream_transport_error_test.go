@@ -181,6 +181,11 @@ func TestHandleUpstreamTransportError_ClientCanceledNoFailover(t *testing.T) {
 	if repo.calls != 0 {
 		t.Fatalf("SetTempUnschedulable called %d times on client cancel, want 0", repo.calls)
 	}
+	raw, _ := c.Get(OpsUpstreamErrorsKey)
+	events, _ := raw.([]*OpsUpstreamErrorEvent)
+	if len(events) != 1 || events[0].Reason != opsUpstreamReasonRequestCanceled {
+		t.Fatalf("client cancel event must be marked %q, got %+v", opsUpstreamReasonRequestCanceled, events)
+	}
 }
 
 // TestHandleUpstreamTransportError_UpstreamDeadlineStillFailsOver pins that an

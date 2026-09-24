@@ -216,6 +216,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 						AccountName:        account.Name,
 						UpstreamStatusCode: 0,
 						Kind:               "signature_retry_request_error",
+						Reason:             opsUpstreamTransportReason(ctx, retryErr),
 						Message:            sanitizeUpstreamErrorMessage(retryErr.Error()),
 					})
 					logger.LegacyPrintf("service.antigravity_gateway", "Antigravity account %d: signature retry request failed (%s): %v", account.ID, stage.name, retryErr)

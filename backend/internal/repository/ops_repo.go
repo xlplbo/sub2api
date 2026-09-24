@@ -939,6 +939,12 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, *filter.AccountID)
 		clauses = append(clauses, "e.account_id = $"+itoa(len(args)))
 	}
+	if filter.ProxyID != nil && *filter.ProxyID > 0 {
+		args = append(args, *filter.ProxyID)
+		clauses = append(clauses, "e.upstream_errors @> jsonb_build_array(jsonb_build_object('proxy_id', $"+itoa(len(args))+"::bigint))")
+	} else if filter.ProxyDirect {
+		clauses = append(clauses, `e.upstream_errors @> '[{"proxy_name": "direct/no_proxy"}]'::jsonb`)
+	}
 	if phase := phaseFilter; phase != "" {
 		args = append(args, phase)
 		clauses = append(clauses, "e.error_phase = $"+itoa(len(args)))

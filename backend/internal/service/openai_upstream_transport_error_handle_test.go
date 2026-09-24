@@ -144,6 +144,17 @@ func TestHandleOpenAIUpstreamTransportError_ParentDeadlineNoFailover(t *testing.
 	require.Empty(t, repo.tempUnschedCalls)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 	require.Zero(t, rec.Body.Len())
+	require.Equal(t, opsUpstreamReasonRequestCanceled, openAITransportOpsEvents(t, c)[0].Reason)
+}
+
+func openAITransportOpsEvents(t *testing.T, c *gin.Context) []*OpsUpstreamErrorEvent {
+	t.Helper()
+	rawEvents, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := rawEvents.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	return events
 }
 
 type failingOpenAIHTTPUpstream struct {
@@ -234,6 +245,7 @@ func TestHandleOpenAIUpstreamTransportError_TransientFailsOverWithoutEviction(t 
 	require.Empty(t, repo.tempUnschedCalls)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 	require.Equal(t, 0, rec.Body.Len())
+	require.Empty(t, openAITransportOpsEvents(t, c)[0].Reason, "transport faults stay counted as proxy failures")
 }
 
 // context.Canceled means the client disconnected — do NOT fail over to another
@@ -258,6 +270,9 @@ func TestHandleOpenAIUpstreamTransportError_ContextCanceled_NoFailoverNoEviction
 
 	// Must NOT write a response body.
 	require.Equal(t, 0, rec.Body.Len())
+
+	// The attempt is still logged but marked so proxy health does not count a client cancel.
+	require.Equal(t, opsUpstreamReasonRequestCanceled, openAITransportOpsEvents(t, c)[0].Reason)
 }
 
 // context.Canceled wrapped inside another error must also avoid failover.
@@ -304,6 +319,7 @@ func TestHandleOpenAIUpstreamTransportError_DeadlineExceeded_StillFailsOver(t *t
 
 	var fo *UpstreamFailoverError
 	require.True(t, errors.As(err, &fo), "context.DeadlineExceeded must still return *UpstreamFailoverError")
+	require.Empty(t, openAITransportOpsEvents(t, c)[0].Reason, "an upstream-side timeout is a transport fault")
 }
 
 func TestForwardAsRawChatCompletions_TransportErrorFailsOver(t *testing.T) {
