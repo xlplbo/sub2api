@@ -134,3 +134,60 @@ rule is:
 If an operator deliberately produces a current-account cohort for legacy data,
 the report must be labeled as a current snapshot; it is not historical proxy
 attribution.
+
+## Consumers
+
+`opsRepository.ListProxyTransportFailures` applies the grouping rule above and
+feeds the ops dashboard proxy card (`OpsDashboardOverview.proxy_health`). The
+`proxy_transport_error_count` alert metric uses
+`CountProxyTransportFailures`, which shares its attempt filter and counts the
+card's managed-proxy failures without the success counts and timelines. Both
+count only transport-level
+attempt failures: a `kind` whose prefix ends in `request_error` and no
+`upstream_status_code`. Upstream HTTP errors routed through a proxy are not
+proxy failures, and neither are attempts ended by the request itself: every
+`request_error` site sets `reason=request_canceled` when the error is
+`context.Canceled` or the request's own deadline (the same condition that skips
+failover and eviction), and the aggregation excludes them. Legacy events without
+the reason are not rewritten. Time is the request end, i.e. the error row's
+`created_at`, the same basis as the upstream error list drill-down and
+`usage_logs`; a failure early in a long request therefore counts when the
+request ends. Attempt `at_unix_ms` only orders attempts within one row. Current
+proxy name and status come from a `proxies` join and are shown next to, never
+instead of, the event label.
+
+The proxy card classifies each managed proxy over the selected range with the
+fixed `OpsProxyHealthRules`: a fault period (red, counted as abnormal) is any
+rolling 5-minute window `[t, t+5m)` inside the selected range with at least 3
+failures at a failure rate of at least 90%; a high error rate (yellow) is a range failure rate of at least
+5% with at least 3 failures; everything else is green. The rate's other side is
+attempts that reached the upstream: HTTP-status attempts by event attribution
+plus successful `usage_logs` rows joined through the account's **current**
+`proxy_id`. Usage logs carry no proxy, so this part is a current-binding
+estimate; the UI labels it as such because it drifts after rebinding or expiry
+fallback.
+
+Fault windows are evaluated on exact times, never on minute buckets, and only
+windows lying entirely inside the selected range count: nothing outside it is
+queried, so a window crossing either edge would miss oks and overstate the rate.
+A range shorter than 5 minutes is evaluated as one window. An event is inside
+`[t, t+5m)` exactly for `t` in `(event - 5m, event]`, so
+`findOpsProxyFaultPeriod` checks `t` at every event and every event minus 5
+minutes, plus the last in-range start, which covers every distinct window. The
+repository only ships the times it needs: it finds failures with at least 3
+failures in the 5 minutes before them (the last failure of any qualifying
+window is one), merges
+`[failure - 5m, failure + 5m]` around them, and returns the failure and ok times
+inside those regions. Only proxies with failures in the range are scanned.
+Classification drops the timelines, so cached dashboard snapshots keep only the
+summary.
+The query runs with `SET LOCAL jit = off`: on long ranges the planner
+estimate crosses `jit_above_cost`, and JIT compilation then takes seconds while
+execution takes about 100 ms.
+
+`GET /admin/ops/upstream-errors?proxy_id=<id|direct>` matches rows with at least
+one attempt carrying that event-time attribution (JSONB containment on
+`upstream_errors`), regardless of the attempt kind, over the same `created_at`
+window as the card. Every failure the card counts is in that list; the list can
+also hold rows whose attempt through the proxy got an upstream HTTP error, and
+one row can carry several failed attempts.

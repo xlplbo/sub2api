@@ -109,6 +109,11 @@ type OpsErrorLogFilter struct {
 	GroupID   *int64
 	AccountID *int64
 
+	// ProxyID / ProxyDirect match rows with an upstream attempt routed through the
+	// given managed proxy, or explicitly without a proxy (event-time attribution).
+	ProxyID     *int64
+	ProxyDirect bool
+
 	StatusCodes      []int
 	StatusCodesOther bool
 	Phase            string // Recovered provider rows bypass status>=400 only with the explicit opt-in below.

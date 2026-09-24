@@ -581,6 +581,21 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 			return 0, false
 		}
 		return float64(n), true
+	case "proxy_transport_error_count":
+		if s == nil || s.opsRepo == nil {
+			return 0, false
+		}
+		failed, err := s.opsRepo.CountProxyTransportFailures(ctx, &OpsDashboardFilter{
+			StartTime: start,
+			EndTime:   end,
+			Platform:  platform,
+			GroupID:   groupID,
+			QueryMode: OpsQueryModeRaw,
+		})
+		if err != nil {
+			return 0, false
+		}
+		return float64(failed), true
 	}
 
 	overview, err := s.opsRepo.GetDashboardOverview(ctx, &OpsDashboardFilter{
