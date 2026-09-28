@@ -159,8 +159,18 @@ let taskRequestId = 0
 
 const noop = () => {}
 
+const cleanupUnsupportedFilterKeys = ['upstream_model_mismatch', 'billing_mode', 'native_compaction_v2'] as const
+
+const toCleanupFilters = (filters: AdminUsageQueryParams): AdminUsageQueryParams => {
+  const next: AdminUsageQueryParams = { ...filters }
+  for (const key of cleanupUnsupportedFilterKeys) {
+    delete next[key]
+  }
+  return next
+}
+
 const resetFilters = () => {
-  localFilters.value = { ...props.filters }
+  localFilters.value = toCleanupFilters(props.filters)
   localStartDate.value = props.startDate
   localEndDate.value = props.endDate
   localFilters.value.start_date = localStartDate.value

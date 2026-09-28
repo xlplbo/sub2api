@@ -81,7 +81,7 @@
         <!-- Model Filter -->
         <div class="w-full sm:w-auto sm:min-w-[220px]">
           <label class="input-label">{{ t('usage.model') }}</label>
-          <Select v-model="filters.model" :options="modelOptions" searchable @change="emitChange" />
+          <Select v-model="modelSelectValue" :options="modelOptions" searchable @change="emitChange" />
         </div>
 
         <!-- Account Filter -->
@@ -222,12 +222,15 @@ interface Props {
   mode?: 'usage' | 'errors' | 'ranking'
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
+  /** 模型下拉提供“模型不一致”项(即 upstream_model_mismatch=true),仅 usage 模式生效 */
+  showModelMismatchOption?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showActions: true,
   mode: 'usage',
-  flat: false
+  flat: false,
+  showModelMismatchOption: false
 })
 const emit = defineEmits([
   'update:modelValue',
@@ -265,10 +268,33 @@ const accountResults = ref<SimpleAccount[]>([])
 const showAccountDropdown = ref(false)
 let accountSearchTimeout: ReturnType<typeof setTimeout> | null = null
 
+const MODEL_MISMATCH_OPTION = '__upstream_model_mismatch__'
+const modelMismatchOptionEnabled = computed(() => props.showModelMismatchOption && props.mode === 'usage')
+
 const modelOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('admin.usage.allModels') },
+  ...(modelMismatchOptionEnabled.value ? [{ value: MODEL_MISMATCH_OPTION, label: t('usage.modelMismatch') }] : []),
   ...(props.modelOptions ?? []).map((m) => ({ value: m, label: m })),
 ])
+
+// “模型不一致”与“上游模型审计”共用 upstream_model_mismatch,两处选择保持同步
+const modelSelectValue = computed<SelectOption['value'] | undefined>({
+  get: () =>
+    modelMismatchOptionEnabled.value && !filters.value.model && filters.value.upstream_model_mismatch === true
+      ? MODEL_MISMATCH_OPTION
+      : filters.value.model,
+  set: (value) => {
+    if (value === MODEL_MISMATCH_OPTION) {
+      filters.value.model = null
+      filters.value.upstream_model_mismatch = true
+      return
+    }
+    if (modelSelectValue.value === MODEL_MISMATCH_OPTION) {
+      filters.value.upstream_model_mismatch = null
+    }
+    filters.value.model = value
+  }
+})
 const groupOptions = ref<SelectOption[]>([{ value: null, label: t('admin.usage.allGroups') }])
 
 const requestTypeOptions = ref<SelectOption[]>([
