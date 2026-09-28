@@ -12,6 +12,7 @@ const messages: Record<string, string> = {
   'admin.usage.searchApiKeyPlaceholder': 'Search API key...',
   'usage.model': 'Model',
   'admin.usage.allModels': 'All Models',
+  'usage.modelMismatch': 'Different model',
   'admin.usage.account': 'Account',
   'admin.usage.searchAccountPlaceholder': 'Search account...',
   'usage.type': 'Type',
@@ -303,5 +304,106 @@ describe('UsageFilters — native compaction filter', () => {
 
     expect(filters.native_compaction_v2).toBe(true)
     expect(wrapper.emitted('change')).toBeTruthy()
+  })
+})
+
+describe('UsageFilters — model mismatch option', () => {
+  const SelectStub = {
+    name: 'Select',
+    props: ['modelValue', 'options'],
+    emits: ['update:modelValue', 'change'],
+    template: '<div />',
+  }
+
+  type Option = { value: unknown; label: string }
+
+  const mountWithSelectStub = (filters: Record<string, any>, props: Record<string, any> = {}) =>
+    mount(UsageFilters, {
+      props: {
+        modelValue: filters,
+        exporting: false,
+        startDate: '2026-05-01',
+        endDate: '2026-05-28',
+        showActions: false,
+        modelOptions: ['glm-5.3', 'gpt-5.5'],
+        showModelMismatchOption: true,
+        ...props,
+      },
+      global: { stubs: { Select: SelectStub, Teleport: true } },
+    })
+
+  const findModelSelect = (wrapper: ReturnType<typeof mountWithSelectStub>) =>
+    wrapper.findAllComponents(SelectStub).find((select: any) =>
+      (select.props('options') as Option[]).some((option) => option.value === 'glm-5.3')
+    )!
+
+  const mismatchOptionOf = (select: ReturnType<typeof findModelSelect>) =>
+    (select.props('options') as Option[]).find((option) => option.label === 'Different model')
+
+  it('offers the option right after All Models and syncs it with upstream_model_mismatch', async () => {
+    const filters = defaultFilters()
+    const wrapper = mountWithSelectStub(filters)
+    const modelSelect = findModelSelect(wrapper)
+    const options = modelSelect.props('options') as Option[]
+    const mismatchOption = mismatchOptionOf(modelSelect)
+
+    expect(mismatchOption).toBeDefined()
+    expect(options.map((option) => option.value)).toEqual([null, mismatchOption!.value, 'glm-5.3', 'gpt-5.5'])
+
+    modelSelect.vm.$emit('update:modelValue', mismatchOption!.value)
+    modelSelect.vm.$emit('change')
+    await wrapper.vm.$nextTick()
+
+    expect(filters.upstream_model_mismatch).toBe(true)
+    expect(filters.model).toBeNull()
+    expect(modelSelect.props('modelValue')).toBe(mismatchOption!.value)
+    expect(wrapper.emitted('change')).toBeTruthy()
+
+    modelSelect.vm.$emit('update:modelValue', 'glm-5.3')
+    await wrapper.vm.$nextTick()
+
+    expect(filters.model).toBe('glm-5.3')
+    expect(filters.upstream_model_mismatch).toBeNull()
+  })
+
+  it('clears the mismatch filter when switching back to All Models', async () => {
+    const filters = { ...defaultFilters(), upstream_model_mismatch: true as boolean | null }
+    const wrapper = mountWithSelectStub(filters)
+    const modelSelect = findModelSelect(wrapper)
+
+    expect(modelSelect.props('modelValue')).toBe(mismatchOptionOf(modelSelect)!.value)
+
+    modelSelect.vm.$emit('update:modelValue', null)
+    await wrapper.vm.$nextTick()
+
+    expect(filters.upstream_model_mismatch).toBeNull()
+    expect(filters.model).toBeNull()
+  })
+
+  it('keeps an audit-only mismatch filter when switching between concrete models', async () => {
+    const filters = { ...defaultFilters(), model: 'glm-5.3' as string | null, upstream_model_mismatch: true as boolean | null }
+    const wrapper = mountWithSelectStub(filters)
+    const modelSelect = findModelSelect(wrapper)
+
+    expect(modelSelect.props('modelValue')).toBe('glm-5.3')
+
+    modelSelect.vm.$emit('update:modelValue', 'gpt-5.5')
+    await wrapper.vm.$nextTick()
+
+    expect(filters.model).toBe('gpt-5.5')
+    expect(filters.upstream_model_mismatch).toBe(true)
+  })
+
+  it.each([
+    ['without the opt-in prop (cleanup dialog)', { showModelMismatchOption: false }],
+    ['in errors mode', { mode: 'errors' }],
+    ['in ranking mode', { mode: 'ranking' }],
+  ])('is not offered %s', (_name, props) => {
+    const filters = { ...defaultFilters(), upstream_model_mismatch: true as boolean | null }
+    const wrapper = mountWithSelectStub(filters, props)
+    const modelSelect = findModelSelect(wrapper)
+
+    expect(mismatchOptionOf(modelSelect)).toBeUndefined()
+    expect(modelSelect.props('modelValue')).toBeNull()
   })
 })
