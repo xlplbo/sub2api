@@ -222,7 +222,7 @@ func (s *adminServiceImpl) PreviewCompositeRoute(ctx context.Context, groupID in
 	if resolver == nil {
 		resolver = NewCompositeRouteResolver(s.compositeRouteRepo)
 	}
-	decision, err := resolver.Resolve(ctx, groupID, input.Model, input.Endpoint)
+	decision, err := resolver.ResolveWithImage(ctx, groupID, input.Model, input.Endpoint, input.HasImage)
 	if err != nil {
 		return nil, err
 	}
@@ -255,6 +255,9 @@ func (s *adminServiceImpl) compositeRouteBelongsToGroup(ctx context.Context, gro
 
 func compositeRouteFromInput(groupID int64, input CompositeRouteInput) (*CompositeModelRoute, error) {
 	input = normalizeCompositeRouteInput(input)
+	if input.RequestCondition != CompositeRouteConditionAny && input.RequestCondition != CompositeRouteConditionHasImage {
+		return nil, fmt.Errorf("request_condition must be any or has_image")
+	}
 	if input.PublicModel == "" {
 		return nil, fmt.Errorf("public_model is required")
 	}
@@ -265,15 +268,16 @@ func compositeRouteFromInput(groupID int64, input CompositeRouteInput) (*Composi
 		input.Priority = 100
 	}
 	return &CompositeModelRoute{
-		GroupID:        groupID,
-		PublicModel:    input.PublicModel,
-		MatchType:      input.MatchType,
-		TargetPlatform: input.TargetPlatform,
-		UpstreamModel:  input.UpstreamModel,
-		Endpoint:       input.Endpoint,
-		Priority:       input.Priority,
-		Enabled:        input.Enabled,
-		Notes:          input.Notes,
+		GroupID:          groupID,
+		PublicModel:      input.PublicModel,
+		MatchType:        input.MatchType,
+		TargetPlatform:   input.TargetPlatform,
+		UpstreamModel:    input.UpstreamModel,
+		Endpoint:         input.Endpoint,
+		RequestCondition: input.RequestCondition,
+		Priority:         input.Priority,
+		Enabled:          input.Enabled,
+		Notes:            input.Notes,
 	}, nil
 }
 

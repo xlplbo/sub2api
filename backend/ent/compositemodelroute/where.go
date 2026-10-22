@@ -105,6 +105,11 @@ func Priority(v int) predicate.CompositeModelRoute {
 	return predicate.CompositeModelRoute(sql.FieldEQ(FieldPriority, v))
 }
 
+// RequestCondition applies equality check predicate on the "request_condition" field. It's identical to RequestConditionEQ.
+func RequestCondition(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldEQ(FieldRequestCondition, v))
+}
+
 // Enabled applies equality check predicate on the "enabled" field. It's identical to EnabledEQ.
 func Enabled(v bool) predicate.CompositeModelRoute {
 	return predicate.CompositeModelRoute(sql.FieldEQ(FieldEnabled, v))
@@ -628,6 +633,71 @@ func PriorityLT(v int) predicate.CompositeModelRoute {
 // PriorityLTE applies the LTE predicate on the "priority" field.
 func PriorityLTE(v int) predicate.CompositeModelRoute {
 	return predicate.CompositeModelRoute(sql.FieldLTE(FieldPriority, v))
+}
+
+// RequestConditionEQ applies the EQ predicate on the "request_condition" field.
+func RequestConditionEQ(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldEQ(FieldRequestCondition, v))
+}
+
+// RequestConditionNEQ applies the NEQ predicate on the "request_condition" field.
+func RequestConditionNEQ(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldNEQ(FieldRequestCondition, v))
+}
+
+// RequestConditionIn applies the In predicate on the "request_condition" field.
+func RequestConditionIn(vs ...string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldIn(FieldRequestCondition, vs...))
+}
+
+// RequestConditionNotIn applies the NotIn predicate on the "request_condition" field.
+func RequestConditionNotIn(vs ...string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldNotIn(FieldRequestCondition, vs...))
+}
+
+// RequestConditionGT applies the GT predicate on the "request_condition" field.
+func RequestConditionGT(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldGT(FieldRequestCondition, v))
+}
+
+// RequestConditionGTE applies the GTE predicate on the "request_condition" field.
+func RequestConditionGTE(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldGTE(FieldRequestCondition, v))
+}
+
+// RequestConditionLT applies the LT predicate on the "request_condition" field.
+func RequestConditionLT(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldLT(FieldRequestCondition, v))
+}
+
+// RequestConditionLTE applies the LTE predicate on the "request_condition" field.
+func RequestConditionLTE(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldLTE(FieldRequestCondition, v))
+}
+
+// RequestConditionContains applies the Contains predicate on the "request_condition" field.
+func RequestConditionContains(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldContains(FieldRequestCondition, v))
+}
+
+// RequestConditionHasPrefix applies the HasPrefix predicate on the "request_condition" field.
+func RequestConditionHasPrefix(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldHasPrefix(FieldRequestCondition, v))
+}
+
+// RequestConditionHasSuffix applies the HasSuffix predicate on the "request_condition" field.
+func RequestConditionHasSuffix(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldHasSuffix(FieldRequestCondition, v))
+}
+
+// RequestConditionEqualFold applies the EqualFold predicate on the "request_condition" field.
+func RequestConditionEqualFold(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldEqualFold(FieldRequestCondition, v))
+}
+
+// RequestConditionContainsFold applies the ContainsFold predicate on the "request_condition" field.
+func RequestConditionContainsFold(v string) predicate.CompositeModelRoute {
+	return predicate.CompositeModelRoute(sql.FieldContainsFold(FieldRequestCondition, v))
 }
 
 // EnabledEQ applies the EQ predicate on the "enabled" field.

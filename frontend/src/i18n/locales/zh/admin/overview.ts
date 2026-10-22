@@ -1178,6 +1178,9 @@ export default {
         selectAtLeastOne: '开启固定账号后至少选择一个账号'
       },
       compositeRoutes: {
+        requestCondition: '触发条件',
+        conditions: { any: '所有请求', has_image: '包含图片' },
+        conditionHint: '模型和端点匹配范围相同时，带图请求优先使用图片规则。请选择支持看图的目标模型；历史消息和工具结果中的图片也会触发。',
         action: '路由',
         title: 'Composite 路由',
         titleWithGroup: 'Composite 路由：{name}',

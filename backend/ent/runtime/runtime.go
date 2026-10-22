@@ -937,8 +937,28 @@ func init() {
 	compositemodelrouteDescPriority := compositemodelrouteFields[6].Descriptor()
 	// compositemodelroute.DefaultPriority holds the default value on creation for the priority field.
 	compositemodelroute.DefaultPriority = compositemodelrouteDescPriority.Default.(int)
+	// compositemodelrouteDescRequestCondition is the schema descriptor for request_condition field.
+	compositemodelrouteDescRequestCondition := compositemodelrouteFields[7].Descriptor()
+	// compositemodelroute.DefaultRequestCondition holds the default value on creation for the request_condition field.
+	compositemodelroute.DefaultRequestCondition = compositemodelrouteDescRequestCondition.Default.(string)
+	// compositemodelroute.RequestConditionValidator is a validator for the "request_condition" field. It is called by the builders before save.
+	compositemodelroute.RequestConditionValidator = func() func(string) error {
+		validators := compositemodelrouteDescRequestCondition.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(request_condition string) error {
+			for _, fn := range fns {
+				if err := fn(request_condition); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
 	// compositemodelrouteDescEnabled is the schema descriptor for enabled field.
-	compositemodelrouteDescEnabled := compositemodelrouteFields[7].Descriptor()
+	compositemodelrouteDescEnabled := compositemodelrouteFields[8].Descriptor()
 	// compositemodelroute.DefaultEnabled holds the default value on creation for the enabled field.
 	compositemodelroute.DefaultEnabled = compositemodelrouteDescEnabled.Default.(bool)
 	errorpassthroughruleMixin := schema.ErrorPassthroughRule{}.Mixin()

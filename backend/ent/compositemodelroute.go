@@ -38,6 +38,8 @@ type CompositeModelRoute struct {
 	Endpoint string `json:"endpoint,omitempty"`
 	// Lower values win within the same match strength.
 	Priority int `json:"priority,omitempty"`
+	// RequestCondition holds the value of the "request_condition" field.
+	RequestCondition string `json:"request_condition,omitempty"`
 	// Enabled holds the value of the "enabled" field.
 	Enabled bool `json:"enabled,omitempty"`
 	// Notes holds the value of the "notes" field.
@@ -77,7 +79,7 @@ func (*CompositeModelRoute) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case compositemodelroute.FieldID, compositemodelroute.FieldGroupID, compositemodelroute.FieldPriority:
 			values[i] = new(sql.NullInt64)
-		case compositemodelroute.FieldPublicModel, compositemodelroute.FieldMatchType, compositemodelroute.FieldTargetPlatform, compositemodelroute.FieldUpstreamModel, compositemodelroute.FieldEndpoint, compositemodelroute.FieldNotes:
+		case compositemodelroute.FieldPublicModel, compositemodelroute.FieldMatchType, compositemodelroute.FieldTargetPlatform, compositemodelroute.FieldUpstreamModel, compositemodelroute.FieldEndpoint, compositemodelroute.FieldRequestCondition, compositemodelroute.FieldNotes:
 			values[i] = new(sql.NullString)
 		case compositemodelroute.FieldCreatedAt, compositemodelroute.FieldUpdatedAt, compositemodelroute.FieldDeletedAt:
 			values[i] = new(sql.NullTime)
@@ -162,6 +164,12 @@ func (_m *CompositeModelRoute) assignValues(columns []string, values []any) erro
 				return fmt.Errorf("unexpected type %T for field priority", values[i])
 			} else if value.Valid {
 				_m.Priority = int(value.Int64)
+			}
+		case compositemodelroute.FieldRequestCondition:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field request_condition", values[i])
+			} else if value.Valid {
+				_m.RequestCondition = value.String
 			}
 		case compositemodelroute.FieldEnabled:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -248,6 +256,9 @@ func (_m *CompositeModelRoute) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("priority=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Priority))
+	builder.WriteString(", ")
+	builder.WriteString("request_condition=")
+	builder.WriteString(_m.RequestCondition)
 	builder.WriteString(", ")
 	builder.WriteString("enabled=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Enabled))

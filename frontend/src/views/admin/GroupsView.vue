@@ -4067,6 +4067,9 @@
                         <span class="badge badge-gray">{{
                           compositeRouteMatchLabel(route.match_type)
                         }}</span>
+                        <span class="badge badge-gray">{{
+                          t(`admin.groups.compositeRoutes.conditions.${route.request_condition || 'any'}`)
+                        }}</span>
                         <span
                           v-if="!route.enabled"
                           class="badge badge-danger"
@@ -4174,6 +4177,18 @@
               </div>
             </div>
 
+            <div>
+              <label class="input-label">{{ t("admin.groups.compositeRoutes.requestCondition") }}</label>
+              <Select
+                v-model="compositeRouteForm.request_condition"
+                data-testid="composite-route-condition"
+                :options="compositeRouteConditionOptions"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.compositeRoutes.conditionHint") }}
+              </p>
+            </div>
+
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label class="input-label">{{
@@ -4254,6 +4269,10 @@
               {{ t("admin.groups.compositeRoutes.preview") }}
             </h3>
             <div class="space-y-3">
+              <label class="flex items-center gap-2 text-sm">
+                <input v-model="compositePreviewHasImage" type="checkbox" data-testid="composite-preview-image" />
+                {{ t("admin.groups.compositeRoutes.conditions.has_image") }}
+              </label>
               <input
                 v-model.trim="compositePreviewModel"
                 type="text"
@@ -4953,6 +4972,7 @@ const rpmOverridesGroup = ref<AdminGroup | null>(null);
 const sortableGroups = ref<AdminGroup[]>([]);
 type ConcreteGroupPlatform = Exclude<GroupPlatform, "composite">;
 type CompositeRouteFormState = {
+  request_condition: CompositeModelRoute["request_condition"];
   public_model: string;
   match_type: CompositeRouteMatchType;
   target_platform: ConcreteGroupPlatform;
@@ -4970,10 +4990,18 @@ const compositeRoutesLoading = ref(false);
 const compositeRouteSaving = ref(false);
 const compositeRouteEditingId = ref<number | null>(null);
 const compositePreviewModel = ref("");
+const compositePreviewHasImage = ref(false);
+const compositeRouteConditionOptions = computed(() =>
+  (["any", "has_image"] as const).map(value => ({
+    value,
+    label: t(`admin.groups.compositeRoutes.conditions.${value}`),
+  })),
+);
 const compositePreviewEndpoint = ref<CompositeRouteEndpoint>("any");
 const compositePreviewLoading = ref(false);
 const compositePreviewDecision = ref<CompositeRouteDecision | null>(null);
 const compositeRouteForm = reactive<CompositeRouteFormState>({
+  request_condition: "any",
   public_model: "",
   match_type: "exact",
   target_platform: "openai",
@@ -6620,6 +6648,7 @@ const compositeRouteSourceLabel = (source: string) => {
 };
 
 const resetCompositeRouteForm = () => {
+  compositeRouteForm.request_condition = "any";
   compositeRouteEditingId.value = null;
   compositeRouteForm.public_model = "";
   compositeRouteForm.match_type = "exact";
@@ -6632,6 +6661,7 @@ const resetCompositeRouteForm = () => {
 };
 
 const toCompositeRouteInput = (): CompositeModelRouteInput => ({
+  request_condition: compositeRouteForm.request_condition,
   public_model: compositeRouteForm.public_model.trim(),
   match_type: compositeRouteForm.match_type,
   target_platform: compositeRouteForm.target_platform,
@@ -6668,6 +6698,7 @@ const loadCompositeRoutes = async () => {
 const handleCompositeRoutes = async (group: AdminGroup) => {
   compositeRoutesGroup.value = group;
   compositePreviewModel.value = "";
+  compositePreviewHasImage.value = false;
   compositePreviewEndpoint.value = "any";
   compositePreviewDecision.value = null;
   resetCompositeRouteForm();
@@ -6684,6 +6715,7 @@ const closeCompositeRoutesModal = () => {
 };
 
 const editCompositeRoute = (route: CompositeModelRoute) => {
+  compositeRouteForm.request_condition = route.request_condition || "any";
   compositeRouteEditingId.value = route.id;
   compositeRouteForm.public_model = route.public_model;
   compositeRouteForm.match_type = route.match_type;
@@ -6766,6 +6798,7 @@ const previewCompositeRoute = async () => {
       {
         model: compositePreviewModel.value.trim(),
         endpoint: compositePreviewEndpoint.value,
+        has_image: compositePreviewHasImage.value,
       },
     );
   } catch (error: any) {

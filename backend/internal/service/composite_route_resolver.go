@@ -36,6 +36,7 @@ func (d CompositeRouteDecision) AmbiguousMessage() string {
 type CompositeRouteResolver struct {
 	repo                   CompositeModelRouteRepository
 	modelOwnershipResolver CompositeModelOwnershipResolver
+	continuations          CompositeContinuationCache
 }
 
 func NewCompositeRouteResolver(repo CompositeModelRouteRepository) *CompositeRouteResolver {
@@ -58,11 +59,13 @@ func (r *CompositeRouteResolver) ListExactPublicModels(ctx context.Context, grou
 		return nil, err
 	}
 	models := make([]string, 0, len(routes))
+	seen := make(map[string]bool, len(routes))
 	for _, route := range routes {
 		if route.Enabled && route.MatchType == CompositeRouteMatchExact &&
 			(endpoint == "" || normalizeCompositeRouteEndpoint(route.Endpoint) == CompositeRouteEndpointAny || normalizeCompositeRouteEndpoint(route.Endpoint) == endpoint) {
-			if model := strings.TrimSpace(route.PublicModel); model != "" {
+			if model := strings.TrimSpace(route.PublicModel); model != "" && !seen[model] {
 				models = append(models, model)
+				seen[model] = true
 			}
 		}
 	}
@@ -95,6 +98,29 @@ func filterSystemOneRouteModels(routes []CompositeModelRoute, models []string, e
 }
 
 func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, model, endpoint string) (CompositeRouteDecision, error) {
+	return r.ResolveWithImage(ctx, groupID, model, endpoint, false)
+}
+
+func (r *CompositeRouteResolver) ResolveWithImage(ctx context.Context, groupID int64, model, endpoint string, hasImage bool) (CompositeRouteDecision, error) {
+	routes, err := r.requestRoutes(ctx, groupID, model)
+	if err != nil {
+		return CompositeRouteDecision{}, err
+	}
+	return r.resolveWithRoutes(ctx, groupID, model, endpoint, routes, hasImage)
+}
+
+func (r *CompositeRouteResolver) requestRoutes(ctx context.Context, groupID int64, model string) ([]CompositeModelRoute, error) {
+	if r == nil || r.repo == nil || groupID <= 0 || strings.TrimSpace(model) == "" {
+		return nil, nil
+	}
+	routes, err := r.repo.ListByGroup(ctx, groupID, false)
+	if err != nil {
+		return nil, fmt.Errorf("list composite routes: %w", err)
+	}
+	return routes, nil
+}
+
+func (r *CompositeRouteResolver) resolveWithRoutes(ctx context.Context, groupID int64, model, endpoint string, routes []CompositeModelRoute, hasImage bool) (CompositeRouteDecision, error) {
 	model = strings.TrimSpace(model)
 	endpoint = normalizeCompositeRouteEndpoint(endpoint)
 	decision := CompositeRouteDecision{
@@ -107,12 +133,8 @@ func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, mod
 		return decision, nil
 	}
 
-	if r != nil && r.repo != nil && groupID > 0 {
-		routes, err := r.repo.ListByGroup(ctx, groupID, false)
-		if err != nil {
-			return decision, fmt.Errorf("list composite routes: %w", err)
-		}
-		if route, ok := matchCompositeRoute(routes, model, endpoint); ok {
+	if len(routes) > 0 {
+		if route, ok := matchCompositeRouteWithImage(routes, model, endpoint, hasImage); ok {
 			upstreamModel := strings.TrimSpace(route.UpstreamModel)
 			if upstreamModel == "" {
 				upstreamModel = model
@@ -180,6 +202,10 @@ func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, mod
 }
 
 func matchCompositeRoute(routes []CompositeModelRoute, model, endpoint string) (CompositeModelRoute, bool) {
+	return matchCompositeRouteWithImage(routes, model, endpoint, false)
+}
+
+func matchCompositeRouteWithImage(routes []CompositeModelRoute, model, endpoint string, hasImage bool) (CompositeModelRoute, bool) {
 	if len(routes) == 0 {
 		return CompositeModelRoute{}, false
 	}
@@ -192,6 +218,15 @@ func matchCompositeRoute(routes []CompositeModelRoute, model, endpoint string) (
 	}
 	candidates := make([]candidate, 0, len(routes))
 	for _, route := range routes {
+		switch route.RequestCondition {
+		case "", CompositeRouteConditionAny:
+		case CompositeRouteConditionHasImage:
+			if !hasImage {
+				continue
+			}
+		default:
+			continue
+		}
 		route.Endpoint = normalizeCompositeRouteEndpoint(route.Endpoint)
 		if route.Endpoint != endpoint && route.Endpoint != CompositeRouteEndpointAny {
 			continue
@@ -243,6 +278,9 @@ func matchCompositeRoute(routes []CompositeModelRoute, model, endpoint string) (
 		}
 		if a.prefixLen != b.prefixLen {
 			return a.prefixLen > b.prefixLen
+		}
+		if (a.route.RequestCondition == CompositeRouteConditionHasImage) != (b.route.RequestCondition == CompositeRouteConditionHasImage) {
+			return a.route.RequestCondition == CompositeRouteConditionHasImage
 		}
 		if a.route.Priority != b.route.Priority {
 			return a.route.Priority < b.route.Priority

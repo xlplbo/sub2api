@@ -35,6 +35,8 @@ const (
 	FieldEndpoint = "endpoint"
 	// FieldPriority holds the string denoting the priority field in the database.
 	FieldPriority = "priority"
+	// FieldRequestCondition holds the string denoting the request_condition field in the database.
+	FieldRequestCondition = "request_condition"
 	// FieldEnabled holds the string denoting the enabled field in the database.
 	FieldEnabled = "enabled"
 	// FieldNotes holds the string denoting the notes field in the database.
@@ -65,6 +67,7 @@ var Columns = []string{
 	FieldUpstreamModel,
 	FieldEndpoint,
 	FieldPriority,
+	FieldRequestCondition,
 	FieldEnabled,
 	FieldNotes,
 }
@@ -113,6 +116,10 @@ var (
 	EndpointValidator func(string) error
 	// DefaultPriority holds the default value on creation for the "priority" field.
 	DefaultPriority int
+	// DefaultRequestCondition holds the default value on creation for the "request_condition" field.
+	DefaultRequestCondition string
+	// RequestConditionValidator is a validator for the "request_condition" field. It is called by the builders before save.
+	RequestConditionValidator func(string) error
 	// DefaultEnabled holds the default value on creation for the "enabled" field.
 	DefaultEnabled bool
 )
@@ -173,6 +180,11 @@ func ByEndpoint(opts ...sql.OrderTermOption) OrderOption {
 // ByPriority orders the results by the priority field.
 func ByPriority(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPriority, opts...).ToFunc()
+}
+
+// ByRequestCondition orders the results by the request_condition field.
+func ByRequestCondition(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRequestCondition, opts...).ToFunc()
 }
 
 // ByEnabled orders the results by the enabled field.

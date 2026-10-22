@@ -43,6 +43,8 @@ Each route belongs to one composite group and contains:
   model is reused.
 - `endpoint`: `any`, `messages`, `count_tokens`, `responses`,
   `chat_completions`, `embeddings`, `images`, or `gemini`.
+- `request_condition`: `any` (default, all requests) or `has_image` (submitted
+  message content contains an image). Existing routes remain `any`.
 - `priority`: lower values win after match specificity.
 - `enabled`: disabled routes are ignored by runtime resolution but remain
   visible to admins.
@@ -50,7 +52,44 @@ Each route belongs to one composite group and contains:
 Resolution order is explicit route first, then built-in detection. When more
 than one explicit route matches, exact matches beat prefix matches,
 endpoint-specific routes beat `any`, longer prefixes beat shorter prefixes,
-then lower `priority`, then lower route id.
+then `has_image` beats `any` for image-bearing requests, then lower `priority`,
+then lower route id. Text requests ignore `has_image` routes. The same model,
+match type and endpoint can have one active rule for each condition.
+
+To route a text-only public model to a vision model, keep its ordinary route
+and add another route with the same public model, match type and endpoint,
+set `request_condition` to `has_image`, and choose the target platform and
+upstream model that support image input. No model capability is inferred or
+hardcoded; the administrator is responsible for selecting a vision-capable
+target and making its accounts available in the composite group.
+
+The route preview accepts `has_image: true`; the UI exposes this as a checkbox.
+Image detection covers Anthropic `image`, OpenAI Chat `image_url`, Responses
+`input_image` (URL or file ID), and Gemini image `inlineData` / `fileData` parts
+(including snake_case fields). Submitted history and structured tool results
+are included. Responses function/custom/MCP/tool-search outputs support image
+arrays, image objects, `content` wrappers, JSON-string output and bare image
+data URLs, matching the existing media conversion bridge.
+Text mentioning images, tool definitions, metadata, audio and
+video do not trigger image rules. Images are not decoded or fetched during
+routing. Image generation/edit multipart requests and remotely stored Gemini
+cached content are outside this content detector.
+
+When Responses text and image destinations differ, the gateway records the
+selected destination for response IDs in Redis for one hour, isolated by user,
+group and public model. HTTP also records returned conversation IDs. HTTP
+continuations and WebSocket reconnects reuse that destination, including text
+following an image.
+The original reference is preserved for the upstream's normal continuation.
+Unknown or expired references, changed/removed destinations, and adding images
+to a text continuation that requires a different destination return HTTP 400
+(WebSocket policy violation), requesting full history without the references.
+The gateway cannot recover unseen provider-held history or transfer it to
+another model. Full-history requests include earlier images and select the
+image route again. Cache failures do not silently select another destination.
+Route resolution reads the group's rules once per request. `image_url` data
+URLs and bare tool-output data URLs with empty or whitespace-only base64
+payloads do not activate image conditions.
 
 For JSON-body endpoints, the gateway rewrites the request `model` field to the
 route's `upstream_model` before dispatch. For Gemini native paths such as
@@ -69,6 +108,13 @@ are supported. The public model remains the admission and response identity;
 the route's upstream model is applied before channel/account mapping. Subsequent
 turns can repeat or omit the public model. Changing it requires reconnecting so
 the gateway can resolve the route and select an account again.
+The first frame also selects the image condition. An image-first connection
+keeps its route for later text turns. If a text-first connection later sends an
+image requiring another platform or upstream model, the gateway closes it with
+a policy violation and asks the client to reconnect with full history.
+Initial frames using continuation references follow the same history check as
+HTTP. Public model admission and usage attribution remain unchanged; the actual
+target model is recorded through the existing upstream model fields.
 
 ## Built-In Detection
 
@@ -144,3 +190,33 @@ This PR intentionally does not implement:
 - AUTO smart-routing among multiple providers for the same abstract task.
 - Direct API-key binding to several existing groups without a composite group.
 - Protocol-agnostic provider decoupling or a LiteLLM-style adapter rewrite.
+
+## Image Route Verification
+
+Run the detector, resolver, ingress and WebSocket regressions from `backend`:
+
+```sh
+go test -vet=off -p 1 ./internal/pkg/requestimage ./internal/service ./internal/server/routes ./internal/handler -run 'TestHasImage|TestComposite|TestOpenAIResponsesWebSocket_Composite' -count=1
+```
+
+`TestCompositeModelRouteRepositoryImageCondition` is an integration test using
+the existing Docker PostgreSQL harness. It verifies persistence, coexistence,
+updates and replacement after soft deletion.
+
+`TestCompositeImageRouteCodexE2E` is an opt-in real Codex smoke test. Set
+`SUB2API_IMAGE_E2E_URL` to an existing gateway origin (without `/v1`),
+`SUB2API_IMAGE_E2E_KEY` to its test key, `SUB2API_IMAGE_E2E_CODEX_ENTRY` to the
+installed Codex `bin/codex.js`, `SUB2API_IMAGE_E2E_PICTURE` to an image containing
+a six-digit code, and `SUB2API_IMAGE_E2E_EXPECTED` to that code. Set
+`SUB2API_IMAGE_E2E_PUBLIC_MODEL` and `SUB2API_IMAGE_E2E_VISION_MODEL` to models
+available through that key. Keep credentials outside repository files.
+
+```sh
+go test -tags=integration -vet=off -p 1 ./internal/server/routes -run '^TestCompositeImageRouteCodexE2E$' -count=1 -v -timeout=5m
+```
+
+This starts a loopback ingress using the new middleware with in-memory route
+fixtures, forwards to the existing gateway, and runs Codex with one-off provider
+overrides while retaining its global configuration. It verifies image reading
+and a shell tool continuation both reach the selected model. It does not deploy
+the new server or replace database-backed integration tests.
