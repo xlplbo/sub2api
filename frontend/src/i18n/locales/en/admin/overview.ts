@@ -1180,6 +1180,9 @@ export default {
         selectAtLeastOne: 'Select at least one account after enabling pinned accounts'
       },
       compositeRoutes: {
+        requestCondition: 'Trigger condition',
+        conditions: { any: 'All requests', has_image: 'Contains images' },
+        conditionHint: 'Within the same model and endpoint scope, image requests prefer image rules. Select a target that supports images. History and structured tool results are included.',
         action: 'Routes',
         title: 'Composite Routes',
         titleWithGroup: 'Composite Routes: {name}',

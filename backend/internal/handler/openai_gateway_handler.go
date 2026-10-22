@@ -21,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestimage"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -2573,9 +2574,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// Keep the client model in the frame for admission, response identity and usage.
 	// Apply the resolved upstream model through MapRequestModel on every turn.
 	wsRouteModel := reqModel
+	var wsRouteDecision service.CompositeRouteDecision
+	wsHasImage := requestimage.HasImage(firstMessage)
 	if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
-		decision, resolveErr := h.compositeResolver.Resolve(c.Request.Context(), apiKey.Group.ID, reqModel, service.CompositeRouteEndpointResponses)
+		c.Request = c.Request.WithContext(service.WithCompositeRouteUser(c.Request.Context(), subject.UserID))
+		decision, resolveErr := h.compositeResolver.ResolveRequest(c.Request.Context(), apiKey.Group.ID, reqModel, service.CompositeRouteEndpointResponses, firstMessage)
 		if resolveErr != nil {
+			if errors.Is(resolveErr, service.ErrCompositeRouteHistoryRequired) {
+				closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, resolveErr.Error())
+				return
+			}
 			reqLog.Error("openai.websocket_composite_route_failed", zap.Error(resolveErr))
 			closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "Failed to resolve composite model route")
 			return
@@ -2586,6 +2594,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			return
 		}
 		if decision.Matched {
+			wsRouteDecision = decision
 			c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
 			wsRouteModel = decision.UpstreamModel
 		}
@@ -3132,6 +3141,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					writeSecurityAuditWSError(ctx, wsConn, decision)
 					return service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 				}
+				if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite && !wsHasImage && requestimage.HasImage(payload) {
+					decision, err := h.compositeResolver.ResolveWithImage(ctx, apiKey.Group.ID, reqModel, service.CompositeRouteEndpointResponses, true)
+					if err != nil {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "Failed to resolve composite image route", err)
+					}
+					platform, _ := service.ResolvedTargetPlatformFromContext(ctx)
+					if decision.TargetPlatform != platform || decision.UpstreamModel != wsRouteModel {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "image route requires reconnect with full history", nil)
+					}
+					wsHasImage = true
+				}
 				return nil
 			},
 			MapRequestModel: func(turn int, originalModel string) (string, error) {
@@ -3250,6 +3270,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return checkSimpleModeTurnBilling()
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
+				if turnErr == nil && result != nil && result.SucceededForScheduling() && wsRouteDecision.TrackContinuation {
+					if err := h.compositeResolver.RememberResponse(c.Request.Context(), wsRouteDecision, result.RequestID, ""); err != nil {
+						reqLog.Warn("composite.continuation_bind_failed", zap.Error(err))
+					}
+				}
 				if account.IsOpenAI() && turnErr == nil && result != nil && result.SucceededForScheduling() {
 					wsTurnSucceededSinceFailover.Store(true)
 				}

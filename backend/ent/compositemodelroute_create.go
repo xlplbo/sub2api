@@ -147,6 +147,20 @@ func (_c *CompositeModelRouteCreate) SetNillablePriority(v *int) *CompositeModel
 	return _c
 }
 
+// SetRequestCondition sets the "request_condition" field.
+func (_c *CompositeModelRouteCreate) SetRequestCondition(v string) *CompositeModelRouteCreate {
+	_c.mutation.SetRequestCondition(v)
+	return _c
+}
+
+// SetNillableRequestCondition sets the "request_condition" field if the given value is not nil.
+func (_c *CompositeModelRouteCreate) SetNillableRequestCondition(v *string) *CompositeModelRouteCreate {
+	if v != nil {
+		_c.SetRequestCondition(*v)
+	}
+	return _c
+}
+
 // SetEnabled sets the "enabled" field.
 func (_c *CompositeModelRouteCreate) SetEnabled(v bool) *CompositeModelRouteCreate {
 	_c.mutation.SetEnabled(v)
@@ -251,6 +265,10 @@ func (_c *CompositeModelRouteCreate) defaults() error {
 		v := compositemodelroute.DefaultPriority
 		_c.mutation.SetPriority(v)
 	}
+	if _, ok := _c.mutation.RequestCondition(); !ok {
+		v := compositemodelroute.DefaultRequestCondition
+		_c.mutation.SetRequestCondition(v)
+	}
 	if _, ok := _c.mutation.Enabled(); !ok {
 		v := compositemodelroute.DefaultEnabled
 		_c.mutation.SetEnabled(v)
@@ -311,6 +329,14 @@ func (_c *CompositeModelRouteCreate) check() error {
 	}
 	if _, ok := _c.mutation.Priority(); !ok {
 		return &ValidationError{Name: "priority", err: errors.New(`ent: missing required field "CompositeModelRoute.priority"`)}
+	}
+	if _, ok := _c.mutation.RequestCondition(); !ok {
+		return &ValidationError{Name: "request_condition", err: errors.New(`ent: missing required field "CompositeModelRoute.request_condition"`)}
+	}
+	if v, ok := _c.mutation.RequestCondition(); ok {
+		if err := compositemodelroute.RequestConditionValidator(v); err != nil {
+			return &ValidationError{Name: "request_condition", err: fmt.Errorf(`ent: validator failed for field "CompositeModelRoute.request_condition": %w`, err)}
+		}
 	}
 	if _, ok := _c.mutation.Enabled(); !ok {
 		return &ValidationError{Name: "enabled", err: errors.New(`ent: missing required field "CompositeModelRoute.enabled"`)}
@@ -380,6 +406,10 @@ func (_c *CompositeModelRouteCreate) createSpec() (*CompositeModelRoute, *sqlgra
 	if value, ok := _c.mutation.Priority(); ok {
 		_spec.SetField(compositemodelroute.FieldPriority, field.TypeInt, value)
 		_node.Priority = value
+	}
+	if value, ok := _c.mutation.RequestCondition(); ok {
+		_spec.SetField(compositemodelroute.FieldRequestCondition, field.TypeString, value)
+		_node.RequestCondition = value
 	}
 	if value, ok := _c.mutation.Enabled(); ok {
 		_spec.SetField(compositemodelroute.FieldEnabled, field.TypeBool, value)
@@ -575,6 +605,18 @@ func (u *CompositeModelRouteUpsert) UpdatePriority() *CompositeModelRouteUpsert 
 // AddPriority adds v to the "priority" field.
 func (u *CompositeModelRouteUpsert) AddPriority(v int) *CompositeModelRouteUpsert {
 	u.Add(compositemodelroute.FieldPriority, v)
+	return u
+}
+
+// SetRequestCondition sets the "request_condition" field.
+func (u *CompositeModelRouteUpsert) SetRequestCondition(v string) *CompositeModelRouteUpsert {
+	u.Set(compositemodelroute.FieldRequestCondition, v)
+	return u
+}
+
+// UpdateRequestCondition sets the "request_condition" field to the value that was provided on create.
+func (u *CompositeModelRouteUpsert) UpdateRequestCondition() *CompositeModelRouteUpsert {
+	u.SetExcluded(compositemodelroute.FieldRequestCondition)
 	return u
 }
 
@@ -790,6 +832,20 @@ func (u *CompositeModelRouteUpsertOne) AddPriority(v int) *CompositeModelRouteUp
 func (u *CompositeModelRouteUpsertOne) UpdatePriority() *CompositeModelRouteUpsertOne {
 	return u.Update(func(s *CompositeModelRouteUpsert) {
 		s.UpdatePriority()
+	})
+}
+
+// SetRequestCondition sets the "request_condition" field.
+func (u *CompositeModelRouteUpsertOne) SetRequestCondition(v string) *CompositeModelRouteUpsertOne {
+	return u.Update(func(s *CompositeModelRouteUpsert) {
+		s.SetRequestCondition(v)
+	})
+}
+
+// UpdateRequestCondition sets the "request_condition" field to the value that was provided on create.
+func (u *CompositeModelRouteUpsertOne) UpdateRequestCondition() *CompositeModelRouteUpsertOne {
+	return u.Update(func(s *CompositeModelRouteUpsert) {
+		s.UpdateRequestCondition()
 	})
 }
 
@@ -1176,6 +1232,20 @@ func (u *CompositeModelRouteUpsertBulk) AddPriority(v int) *CompositeModelRouteU
 func (u *CompositeModelRouteUpsertBulk) UpdatePriority() *CompositeModelRouteUpsertBulk {
 	return u.Update(func(s *CompositeModelRouteUpsert) {
 		s.UpdatePriority()
+	})
+}
+
+// SetRequestCondition sets the "request_condition" field.
+func (u *CompositeModelRouteUpsertBulk) SetRequestCondition(v string) *CompositeModelRouteUpsertBulk {
+	return u.Update(func(s *CompositeModelRouteUpsert) {
+		s.SetRequestCondition(v)
+	})
+}
+
+// UpdateRequestCondition sets the "request_condition" field to the value that was provided on create.
+func (u *CompositeModelRouteUpsertBulk) UpdateRequestCondition() *CompositeModelRouteUpsertBulk {
+	return u.Update(func(s *CompositeModelRouteUpsert) {
+		s.UpdateRequestCondition()
 	})
 }
 

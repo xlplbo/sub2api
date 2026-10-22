@@ -700,8 +700,10 @@ export type CompositeRouteEndpoint =
   | 'gemini'
 
 export type CompositeRouteSource = 'route' | 'detector' | string
+export type CompositeRouteCondition = 'any' | 'has_image'
 
 export interface CompositeModelRoute {
+  request_condition: CompositeRouteCondition
   id: number
   group_id: number
   public_model: string
@@ -717,6 +719,7 @@ export interface CompositeModelRoute {
 }
 
 export interface CompositeModelRouteInput {
+  request_condition?: CompositeRouteCondition
   public_model: string
   match_type: CompositeRouteMatchType
   target_platform: Exclude<GroupPlatform, 'composite'>
@@ -728,6 +731,7 @@ export interface CompositeModelRouteInput {
 }
 
 export interface CompositeRoutePreviewRequest {
+  has_image?: boolean
   model: string
   endpoint: CompositeRouteEndpoint
 }

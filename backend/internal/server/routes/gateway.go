@@ -586,8 +586,13 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 		routePath := c.FullPath()
 		model := requestmodel.FromBodyForRoute(routePath, c.GetHeader("Content-Type"), body)
 		if model != "" {
-			decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, compositeRouteEndpointForPath(c.Request.URL.Path))
+			c.Request = c.Request.WithContext(service.WithCompositeRouteUser(c.Request.Context(), apiKey.UserID))
+			decision, err := resolver.ResolveRequest(c.Request.Context(), apiKey.Group.ID, model, compositeRouteEndpointForPath(c.Request.URL.Path), body)
 			if err != nil {
+				if errors.Is(err, service.ErrCompositeRouteHistoryRequired) {
+					c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": err.Error()}})
+					return
+				}
 				c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
 				c.Abort()
 				return
@@ -602,6 +607,9 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 			}
 			if decision.Matched {
 				c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
+				if decision.TrackContinuation {
+					c.Writer = newCompositeContinuationWriter(c.Writer, c.Request.Context(), resolver, decision)
+				}
 				if upstreamModel := strings.TrimSpace(decision.UpstreamModel); upstreamModel != "" && upstreamModel != model && gjson.ValidBytes(body) {
 					if _, modelPath := requestmodel.JSONModelPathForRoute(routePath, body); modelPath != "" {
 						if rewritten, rewriteErr := sjson.SetBytes(body, modelPath, upstreamModel); rewriteErr == nil {
@@ -625,7 +633,18 @@ func compositeGeminiTargetPlatformMiddleware(resolver *service.CompositeRouteRes
 		if ok && apiKey != nil && apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
 			model := compositeGeminiModelFromParams(c)
 			if model != "" {
-				decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, service.CompositeRouteEndpointGemini)
+				body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
+				if err != nil {
+					status := http.StatusBadRequest
+					var maxErr *http.MaxBytesError
+					if errors.As(err, &maxErr) {
+						status = http.StatusRequestEntityTooLarge
+					}
+					c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "Failed to read request body"}})
+					return
+				}
+				requestmodel.ResetRequestBody(c.Request, body)
+				decision, err := resolver.ResolveRequest(c.Request.Context(), apiKey.Group.ID, model, service.CompositeRouteEndpointGemini, body)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
 					c.Abort()

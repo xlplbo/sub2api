@@ -12,6 +12,9 @@ const (
 	CompositeRouteMatchExact  = "exact"
 	CompositeRouteMatchPrefix = "prefix"
 
+	CompositeRouteConditionAny      = "any"
+	CompositeRouteConditionHasImage = "has_image"
+
 	CompositeRouteEndpointAny             = "any"
 	CompositeRouteEndpointMessages        = "messages"
 	CompositeRouteEndpointCountTokens     = "count_tokens"
@@ -49,46 +52,50 @@ var (
 // CompositeModelRoute maps one public model identifier in a composite group to
 // the concrete provider/model that should handle the request.
 type CompositeModelRoute struct {
-	ID             int64     `json:"id"`
-	GroupID        int64     `json:"group_id"`
-	PublicModel    string    `json:"public_model"`
-	MatchType      string    `json:"match_type"`
-	TargetPlatform string    `json:"target_platform"`
-	UpstreamModel  string    `json:"upstream_model"`
-	Endpoint       string    `json:"endpoint"`
-	Priority       int       `json:"priority"`
-	Enabled        bool      `json:"enabled"`
-	Notes          string    `json:"notes"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID               int64     `json:"id"`
+	GroupID          int64     `json:"group_id"`
+	PublicModel      string    `json:"public_model"`
+	MatchType        string    `json:"match_type"`
+	TargetPlatform   string    `json:"target_platform"`
+	UpstreamModel    string    `json:"upstream_model"`
+	Endpoint         string    `json:"endpoint"`
+	RequestCondition string    `json:"request_condition"`
+	Priority         int       `json:"priority"`
+	Enabled          bool      `json:"enabled"`
+	Notes            string    `json:"notes"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type CompositeRoutePreviewRequest struct {
 	Model    string `json:"model"`
 	Endpoint string `json:"endpoint"`
+	HasImage bool   `json:"has_image"`
 }
 
 type CompositeRouteDecision struct {
-	Matched        bool                 `json:"matched"`
-	Source         string               `json:"source"`
-	GroupID        int64                `json:"group_id"`
-	PublicModel    string               `json:"public_model"`
-	TargetPlatform string               `json:"target_platform"`
-	UpstreamModel  string               `json:"upstream_model"`
-	Endpoint       string               `json:"endpoint"`
-	Route          *CompositeModelRoute `json:"route,omitempty"`
-	Reason         string               `json:"reason,omitempty"`
+	Matched           bool                 `json:"matched"`
+	Source            string               `json:"source"`
+	GroupID           int64                `json:"group_id"`
+	PublicModel       string               `json:"public_model"`
+	TargetPlatform    string               `json:"target_platform"`
+	UpstreamModel     string               `json:"upstream_model"`
+	Endpoint          string               `json:"endpoint"`
+	Route             *CompositeModelRoute `json:"route,omitempty"`
+	Reason            string               `json:"reason,omitempty"`
+	TrackContinuation bool                 `json:"-"`
 }
 
 type CompositeRouteInput struct {
-	PublicModel    string
-	MatchType      string
-	TargetPlatform string
-	UpstreamModel  string
-	Endpoint       string
-	Priority       int
-	Enabled        bool
-	Notes          string
+	PublicModel      string
+	MatchType        string
+	TargetPlatform   string
+	UpstreamModel    string
+	Endpoint         string
+	RequestCondition string
+	Priority         int
+	Enabled          bool
+	Notes            string
 }
 
 type CompositeModelRouteRepository interface {
@@ -134,6 +141,10 @@ func normalizeCompositeRouteInput(input CompositeRouteInput) CompositeRouteInput
 	input.TargetPlatform = strings.TrimSpace(input.TargetPlatform)
 	input.UpstreamModel = strings.TrimSpace(input.UpstreamModel)
 	input.Endpoint = normalizeCompositeRouteEndpoint(input.Endpoint)
+	input.RequestCondition = strings.ToLower(strings.TrimSpace(input.RequestCondition))
+	if input.RequestCondition == "" {
+		input.RequestCondition = CompositeRouteConditionAny
+	}
 	// 仅对 exact 路由把空 upstream_model 回填成 public_model：exact 命中时请求模型
 	// 恒等于 public_model，回填只影响持久化/后台展示，保留原有契约不变。
 	// prefix 路由留空则不回填——Resolve 会回退到具体请求模型，从而透传原始模型

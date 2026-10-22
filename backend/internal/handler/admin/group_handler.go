@@ -339,17 +339,19 @@ type UpdateGroupRequest struct {
 }
 
 type CompositeRouteRequest struct {
-	PublicModel    string `json:"public_model" binding:"required"`
-	MatchType      string `json:"match_type" binding:"omitempty,oneof=exact prefix"`
-	TargetPlatform string `json:"target_platform" binding:"required,concrete_platform"`
-	UpstreamModel  string `json:"upstream_model"`
-	Endpoint       string `json:"endpoint" binding:"omitempty,oneof=any messages count_tokens responses chat_completions embeddings images gemini"`
-	Priority       int    `json:"priority"`
-	Enabled        *bool  `json:"enabled"`
-	Notes          string `json:"notes"`
+	RequestCondition string `json:"request_condition" binding:"omitempty,oneof=any has_image"`
+	PublicModel      string `json:"public_model" binding:"required"`
+	MatchType        string `json:"match_type" binding:"omitempty,oneof=exact prefix"`
+	TargetPlatform   string `json:"target_platform" binding:"required,concrete_platform"`
+	UpstreamModel    string `json:"upstream_model"`
+	Endpoint         string `json:"endpoint" binding:"omitempty,oneof=any messages count_tokens responses chat_completions embeddings images gemini"`
+	Priority         int    `json:"priority"`
+	Enabled          *bool  `json:"enabled"`
+	Notes            string `json:"notes"`
 }
 
 type CompositeRoutePreviewRequest struct {
+	HasImage bool   `json:"has_image"`
 	Model    string `json:"model" binding:"required"`
 	Endpoint string `json:"endpoint" binding:"omitempty,oneof=any messages count_tokens responses chat_completions embeddings images gemini"`
 }
@@ -507,6 +509,7 @@ func (h *GroupHandler) PreviewCompositeRoute(c *gin.Context) {
 		return
 	}
 	decision, err := h.adminService.PreviewCompositeRoute(c.Request.Context(), groupID, service.CompositeRoutePreviewRequest{
+		HasImage: req.HasImage,
 		Model:    req.Model,
 		Endpoint: req.Endpoint,
 	})
@@ -523,14 +526,15 @@ func compositeRouteRequestToInput(req CompositeRouteRequest, defaultEnabled bool
 		enabled = *req.Enabled
 	}
 	return service.CompositeRouteInput{
-		PublicModel:    req.PublicModel,
-		MatchType:      req.MatchType,
-		TargetPlatform: req.TargetPlatform,
-		UpstreamModel:  req.UpstreamModel,
-		Endpoint:       req.Endpoint,
-		Priority:       req.Priority,
-		Enabled:        enabled,
-		Notes:          req.Notes,
+		RequestCondition: req.RequestCondition,
+		PublicModel:      req.PublicModel,
+		MatchType:        req.MatchType,
+		TargetPlatform:   req.TargetPlatform,
+		UpstreamModel:    req.UpstreamModel,
+		Endpoint:         req.Endpoint,
+		Priority:         req.Priority,
+		Enabled:          enabled,
+		Notes:            req.Notes,
 	}
 }
 

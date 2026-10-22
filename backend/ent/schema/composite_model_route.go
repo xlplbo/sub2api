@@ -66,6 +66,15 @@ func (CompositeModelRoute) Fields() []ent.Field {
 		field.Int("priority").
 			Default(100).
 			Comment("Lower values win within the same match strength."),
+		field.String("request_condition").
+			MaxLen(20).
+			Default("any").
+			Validate(func(s string) error {
+				if s != "any" && s != "has_image" {
+					return fmt.Errorf("invalid request_condition %q", s)
+				}
+				return nil
+			}),
 		field.Bool("enabled").
 			Default(true),
 		field.String("notes").

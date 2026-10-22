@@ -19707,27 +19707,28 @@ func (m *ChannelMonitorRequestTemplateMutation) ResetEdge(name string) error {
 // CompositeModelRouteMutation represents an operation that mutates the CompositeModelRoute nodes in the graph.
 type CompositeModelRouteMutation struct {
 	config
-	op              Op
-	typ             string
-	id              *int64
-	created_at      *time.Time
-	updated_at      *time.Time
-	deleted_at      *time.Time
-	public_model    *string
-	match_type      *string
-	target_platform *string
-	upstream_model  *string
-	endpoint        *string
-	priority        *int
-	addpriority     *int
-	enabled         *bool
-	notes           *string
-	clearedFields   map[string]struct{}
-	group           *int64
-	clearedgroup    bool
-	done            bool
-	oldValue        func(context.Context) (*CompositeModelRoute, error)
-	predicates      []predicate.CompositeModelRoute
+	op                Op
+	typ               string
+	id                *int64
+	created_at        *time.Time
+	updated_at        *time.Time
+	deleted_at        *time.Time
+	public_model      *string
+	match_type        *string
+	target_platform   *string
+	upstream_model    *string
+	endpoint          *string
+	priority          *int
+	addpriority       *int
+	request_condition *string
+	enabled           *bool
+	notes             *string
+	clearedFields     map[string]struct{}
+	group             *int64
+	clearedgroup      bool
+	done              bool
+	oldValue          func(context.Context) (*CompositeModelRoute, error)
+	predicates        []predicate.CompositeModelRoute
 }
 
 var _ ent.Mutation = (*CompositeModelRouteMutation)(nil)
@@ -20221,6 +20222,42 @@ func (m *CompositeModelRouteMutation) ResetPriority() {
 	m.addpriority = nil
 }
 
+// SetRequestCondition sets the "request_condition" field.
+func (m *CompositeModelRouteMutation) SetRequestCondition(s string) {
+	m.request_condition = &s
+}
+
+// RequestCondition returns the value of the "request_condition" field in the mutation.
+func (m *CompositeModelRouteMutation) RequestCondition() (r string, exists bool) {
+	v := m.request_condition
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestCondition returns the old "request_condition" field's value of the CompositeModelRoute entity.
+// If the CompositeModelRoute object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *CompositeModelRouteMutation) OldRequestCondition(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestCondition is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestCondition requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestCondition: %w", err)
+	}
+	return oldValue.RequestCondition, nil
+}
+
+// ResetRequestCondition resets all changes to the "request_condition" field.
+func (m *CompositeModelRouteMutation) ResetRequestCondition() {
+	m.request_condition = nil
+}
+
 // SetEnabled sets the "enabled" field.
 func (m *CompositeModelRouteMutation) SetEnabled(b bool) {
 	m.enabled = &b
@@ -20367,7 +20404,7 @@ func (m *CompositeModelRouteMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *CompositeModelRouteMutation) Fields() []string {
-	fields := make([]string, 0, 12)
+	fields := make([]string, 0, 13)
 	if m.created_at != nil {
 		fields = append(fields, compositemodelroute.FieldCreatedAt)
 	}
@@ -20397,6 +20434,9 @@ func (m *CompositeModelRouteMutation) Fields() []string {
 	}
 	if m.priority != nil {
 		fields = append(fields, compositemodelroute.FieldPriority)
+	}
+	if m.request_condition != nil {
+		fields = append(fields, compositemodelroute.FieldRequestCondition)
 	}
 	if m.enabled != nil {
 		fields = append(fields, compositemodelroute.FieldEnabled)
@@ -20432,6 +20472,8 @@ func (m *CompositeModelRouteMutation) Field(name string) (ent.Value, bool) {
 		return m.Endpoint()
 	case compositemodelroute.FieldPriority:
 		return m.Priority()
+	case compositemodelroute.FieldRequestCondition:
+		return m.RequestCondition()
 	case compositemodelroute.FieldEnabled:
 		return m.Enabled()
 	case compositemodelroute.FieldNotes:
@@ -20465,6 +20507,8 @@ func (m *CompositeModelRouteMutation) OldField(ctx context.Context, name string)
 		return m.OldEndpoint(ctx)
 	case compositemodelroute.FieldPriority:
 		return m.OldPriority(ctx)
+	case compositemodelroute.FieldRequestCondition:
+		return m.OldRequestCondition(ctx)
 	case compositemodelroute.FieldEnabled:
 		return m.OldEnabled(ctx)
 	case compositemodelroute.FieldNotes:
@@ -20547,6 +20591,13 @@ func (m *CompositeModelRouteMutation) SetField(name string, value ent.Value) err
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetPriority(v)
+		return nil
+	case compositemodelroute.FieldRequestCondition:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestCondition(v)
 		return nil
 	case compositemodelroute.FieldEnabled:
 		v, ok := value.(bool)
@@ -20670,6 +20721,9 @@ func (m *CompositeModelRouteMutation) ResetField(name string) error {
 		return nil
 	case compositemodelroute.FieldPriority:
 		m.ResetPriority()
+		return nil
+	case compositemodelroute.FieldRequestCondition:
+		m.ResetRequestCondition()
 		return nil
 	case compositemodelroute.FieldEnabled:
 		m.ResetEnabled()

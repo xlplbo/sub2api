@@ -160,6 +160,20 @@ func (_u *CompositeModelRouteUpdate) AddPriority(v int) *CompositeModelRouteUpda
 	return _u
 }
 
+// SetRequestCondition sets the "request_condition" field.
+func (_u *CompositeModelRouteUpdate) SetRequestCondition(v string) *CompositeModelRouteUpdate {
+	_u.mutation.SetRequestCondition(v)
+	return _u
+}
+
+// SetNillableRequestCondition sets the "request_condition" field if the given value is not nil.
+func (_u *CompositeModelRouteUpdate) SetNillableRequestCondition(v *string) *CompositeModelRouteUpdate {
+	if v != nil {
+		_u.SetRequestCondition(*v)
+	}
+	return _u
+}
+
 // SetEnabled sets the "enabled" field.
 func (_u *CompositeModelRouteUpdate) SetEnabled(v bool) *CompositeModelRouteUpdate {
 	_u.mutation.SetEnabled(v)
@@ -279,6 +293,11 @@ func (_u *CompositeModelRouteUpdate) check() error {
 			return &ValidationError{Name: "endpoint", err: fmt.Errorf(`ent: validator failed for field "CompositeModelRoute.endpoint": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.RequestCondition(); ok {
+		if err := compositemodelroute.RequestConditionValidator(v); err != nil {
+			return &ValidationError{Name: "request_condition", err: fmt.Errorf(`ent: validator failed for field "CompositeModelRoute.request_condition": %w`, err)}
+		}
+	}
 	if _u.mutation.GroupCleared() && len(_u.mutation.GroupIDs()) > 0 {
 		return errors.New(`ent: clearing a required unique edge "CompositeModelRoute.group"`)
 	}
@@ -326,6 +345,9 @@ func (_u *CompositeModelRouteUpdate) sqlSave(ctx context.Context) (_node int, er
 	}
 	if value, ok := _u.mutation.AddedPriority(); ok {
 		_spec.AddField(compositemodelroute.FieldPriority, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.RequestCondition(); ok {
+		_spec.SetField(compositemodelroute.FieldRequestCondition, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Enabled(); ok {
 		_spec.SetField(compositemodelroute.FieldEnabled, field.TypeBool, value)
@@ -516,6 +538,20 @@ func (_u *CompositeModelRouteUpdateOne) AddPriority(v int) *CompositeModelRouteU
 	return _u
 }
 
+// SetRequestCondition sets the "request_condition" field.
+func (_u *CompositeModelRouteUpdateOne) SetRequestCondition(v string) *CompositeModelRouteUpdateOne {
+	_u.mutation.SetRequestCondition(v)
+	return _u
+}
+
+// SetNillableRequestCondition sets the "request_condition" field if the given value is not nil.
+func (_u *CompositeModelRouteUpdateOne) SetNillableRequestCondition(v *string) *CompositeModelRouteUpdateOne {
+	if v != nil {
+		_u.SetRequestCondition(*v)
+	}
+	return _u
+}
+
 // SetEnabled sets the "enabled" field.
 func (_u *CompositeModelRouteUpdateOne) SetEnabled(v bool) *CompositeModelRouteUpdateOne {
 	_u.mutation.SetEnabled(v)
@@ -648,6 +684,11 @@ func (_u *CompositeModelRouteUpdateOne) check() error {
 			return &ValidationError{Name: "endpoint", err: fmt.Errorf(`ent: validator failed for field "CompositeModelRoute.endpoint": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.RequestCondition(); ok {
+		if err := compositemodelroute.RequestConditionValidator(v); err != nil {
+			return &ValidationError{Name: "request_condition", err: fmt.Errorf(`ent: validator failed for field "CompositeModelRoute.request_condition": %w`, err)}
+		}
+	}
 	if _u.mutation.GroupCleared() && len(_u.mutation.GroupIDs()) > 0 {
 		return errors.New(`ent: clearing a required unique edge "CompositeModelRoute.group"`)
 	}
@@ -712,6 +753,9 @@ func (_u *CompositeModelRouteUpdateOne) sqlSave(ctx context.Context) (_node *Com
 	}
 	if value, ok := _u.mutation.AddedPriority(); ok {
 		_spec.AddField(compositemodelroute.FieldPriority, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.RequestCondition(); ok {
+		_spec.SetField(compositemodelroute.FieldRequestCondition, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Enabled(); ok {
 		_spec.SetField(compositemodelroute.FieldEnabled, field.TypeBool, value)
